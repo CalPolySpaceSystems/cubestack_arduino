@@ -14,72 +14,91 @@ imu_triple::imu_triple(int cs_fine, int cs_coarse, int cs_hi_g){
     cs_f = cs_fine;
     cs_c = cs_coarse;
     cs_h = cs_hi_g;
-
-    /* Init fine sensor */
-    imu_triple.set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x70);
-    imu_triple.set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x70);
-
-    /* Init coarse sensor */
-    imu_triple.set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x7C);
-    imu_triple.set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x7C);
-
-    /* Init hi-g sensor */
-    imu_triple.set(H3LIS331DL,H3LIS331DL_CTRL1,0x37);
-
+    
 }
 
 /* TODOS
 *   
-*   set/get
 *   read devices
 *   set calibration, define calib array 
 *   apply centripetal accel to float values
 *
 */
 
+/* Access internal addresses *
+void imu_triple::init(){
+  
+    /* Init fine sensor *
+    imu_triple.set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x70);
+    imu_triple.set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x70);
+
+    /* Init coarse sensor *
+    imu_triple.set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x7C);
+    imu_triple.set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x7C);
+
+    /* Init hi-g sensor *
+    imu_triple.set(H3LIS331DL,H3LIS331DL_CTRL1,0x37);
+
+}
+*/
 
 /* Access internal addresses */
 void imu_triple::set(imu_device_t dev, uint8_t addr, uint8_t value){
     
+    int cs_pin;
+    
     /* Decide which device to read from */
     if (dev == LSM6DSL_FINE){
-        int cs_pin = cs_f;
+        cs_pin = cs_f;
     }
     
     else if(dev == LSM6DSL_COARSE){
-        int cs_pin = cs_c;
+        cs_pin = cs_c;
     }
 
     else{
-        int cs_pin = cs_h;
+        cs_pin = cs_h;
     }
 
     /* Write to the desired sensor */
+    SPI.beginTransaction(SPISettings(SPI_SPEED,SPI_ENDIAN,SPI_MODE));
+    
     digitalWrite(cs_pin, LOW);
-    SPI.transfer16((addr<<8) | (value));
+    SPI.transfer(addr);
+    SPI.transfer(value);
     digitalWrite(cs_pin, HIGH);
+
+    SPI.endTransaction();
 
 }
 
 uint8_t imu_triple::get(imu_device_t dev, uint8_t addr){
+
+    int cs_pin;
     
     /* Decide which device to read from */
     if (dev == LSM6DSL_FINE){
-        int cs_pin = cs_f;
+        cs_pin = cs_f;
     }
     
     else if(dev == LSM6DSL_COARSE){
-        int cs_pin = cs_c;
+        cs_pin = cs_c;
     }
 
     else{
-        int cs_pin = cs_h;
+        cs_pin = cs_h;
     }
 
     /* Read from the desired sensor */
+    SPI.beginTransaction(SPISettings(SPI_SPEED,SPI_ENDIAN,SPI_MODE));
+    
     digitalWrite(cs_pin, LOW);
-    SPI.transfer(buf,regs);
+    uint8_t val = SPI.transfer(0x80 | addr);
     digitalWrite(cs_pin, HIGH);
+
+    SPI.endTransaction();
+
+    return val;
 
 }
 
@@ -88,24 +107,29 @@ void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
 
     uint8_t buf[12];
     uint8_t acc_ofs = 0;
-
-    /* Decide which device to read from */
+    int cs_pin;
+    uint8_t regs;
+    byte out_start;
+    
+    /* Read the fine A/G */
     if (dev == LSM6DSL_FINE){
-        uint8_t regs = 12;
-        int cs_pin = cs_f;
-        byte out_start = LSM6DSL_OUT_START;
+        regs = 12;
+        cs_pin = cs_f;
+        out_start = LSM6DSL_OUT_START;
     }
     
+    /* Read the coarse A/G */
     else if(dev == LSM6DSL_COARSE){
-        uint8_t regs = 12;
-        int cs_pin = cs_c;
-        byte out_start = LSM6DSL_OUT_START;
+        regs = 12;
+        cs_pin = cs_c;
+        out_start = LSM6DSL_OUT_START;
     }
 
+    /* Read the high-g accelerometer */
     else{
-        uint8_t regs = 6;
-        int cs_pin = cs_h;
-        byte out_start = H3LIS331DL_OUT_START;
+        regs = 6;
+        cs_pin = cs_h;
+       out_start = H3LIS331DL_OUT_START;
         acc_ofs = 3;
     }
 
@@ -115,9 +139,13 @@ void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
     }
 
     /* Read the desired sensor */
+    SPI.beginTransaction(SPISettings(SPI_SPEED,SPI_ENDIAN,SPI_MODE));
+    
     digitalWrite(cs_pin, LOW);
     SPI.transfer(buf,regs);
     digitalWrite(cs_pin, HIGH);
+
+    SPI.endTransaction();
 
     for (uint8_t i=0;i<regs;i=i+2){
         
@@ -129,43 +157,43 @@ void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
 
 }
 
-/* Set the calibration offsets for the sensor */
-void imu_triple::set_calib(imu_device_t dev, int16_t *calib){
-    // sets the declared calibration array
-    
-    // Set internal offset registers - A/G, accel, fine/coarse
-
-}
-
 /* Read data */ 
-void imu_triple::read_raw(imu_raw *raw, uint16_t saturate){
+uint16_t imu_triple::read_raw(imu_raw *raw){
     
     uint8_t buf[12];
-    saturate = 0;
+    uint16_t saturate = 0;
 
     /* Fill buffer with all addresses to read from */
     for (uint8_t i=0;i<12;i++){
-        buf[i] = LSM6DSL_OUT_START+i;
+        buf[i] = LSM6DSL_OUT_START+i+1;
     }
 
     /* Read the fine A/G */
+    SPI.beginTransaction(SPISettings(SPI_SPEED,SPI_ENDIAN,SPI_MODE));
+    
     digitalWrite(cs_f, LOW);
+    SPI.transfer(LSM6DSL_OUT_START);
     SPI.transfer(buf,12);
     digitalWrite(cs_f, HIGH);
+
+    SPI.endTransaction();
 
     for (uint8_t i=0;i<12;i=i+2){
         
         /* Put buffer into raw data array */
-        raw->a[i/2] = ((buf[i] << 8) | buf[i+1]);
+        raw->a[i/2] = (buf[i] | (buf[i+1]<<8));
 
         /* Find if any values are saturated */
-        if ((raw->a[i/2] & 0x8F) > 0x8C){
+        if (abs(raw->a[i/2]) > 32000){
             saturate |= (1<<(i/2));
         }
         else{
-            // add calib
+            raw->a[i/2] = (raw->a[i/2] + calib_fine[i/2]);
         }
+    
     }
+
+    //SerialUSB.println(saturate);
 
     /* If necessary, read from the coarse A/G */
     if (saturate){
@@ -174,28 +202,34 @@ void imu_triple::read_raw(imu_raw *raw, uint16_t saturate){
 
         /* Fill buffer with all addresses to read from */
         for (uint8_t i=0;i<12;i++){
-            buf[i] = LSM6DSL_OUT_START+i;
+            buf[i] = LSM6DSL_OUT_START+i+1;
         }
 
         /* Read from the coarse A/G */
+        SPI.beginTransaction(SPISettings(SPI_SPEED,SPI_ENDIAN,SPI_MODE));
+    
         digitalWrite(cs_c, LOW);
+        SPI.transfer(LSM6DSL_OUT_START);
         SPI.transfer(buf,12);
         digitalWrite(cs_c, HIGH);
 
-        /* Write new data into the array of raw values only if they are saturated*/
-        for (uint8_t i=0;i<12);i=i+2){
-    
-            if (saturate & (1<<i)){
+        SPI.endTransaction();
 
-             
-                raw->a[i/2] = ((buf[i] << 8) | buf[i+1]);
+        /* Write new data into the array of raw values only if they are saturated*/
+        for (uint8_t i=0;i<12;i=i+2){
+    
+            if ((saturate) & (1<<(i/2))){
+
+                //SerialUSB.println(i);
+              
+                raw->a[i/2] = (buf[i] | (buf[i+1]<<8));
 
                 /* Find if accelerometer values are saturated */
-                if (((raw->a[i/2] & 0x8F) > 0x8C)&(i>4)){
+                if ((abs(raw->a[i/2] > 32000))&(i>5)){
                     saturate |= (1<<((i/2)+6));
                 }
                 else{
-                    raw->a[i/2] += calib[(i/2)+6]
+                    raw->a[i/2] = (raw->a[i/2] + calib_coarse[i/2]);
                 }
                 
             }
@@ -209,21 +243,26 @@ void imu_triple::read_raw(imu_raw *raw, uint16_t saturate){
 
         /* Fill buffer with all addresses to read from */
         for (uint8_t i=0;i<6;i++){
-            buf[i] = H3LIS331DL_OUT_START+i;
+            buf[i] = H3LIS331DL_OUT_START+i+1;
         }
 
         /* Retieve data from hi-g sensor */
+        SPI.beginTransaction(SPISettings(5000000,SPI_ENDIAN,SPI_MODE));
+    
         digitalWrite(cs_h, LOW);
+        SPI.transfer(H3LIS331DL_OUT_START);
         SPI.transfer(buf,6);
         digitalWrite(cs_h, HIGH);
 
+        SPI.endTransaction();
+
         /* Put the hi-g values into the raw data array if necessary */
-        for (uint8_t i=6;i<12);i=i+2){
+        for (uint8_t i=0;i<6;i=i+2){
     
-            if (saturate & (1<<(i+6)){
+            if (saturate && (1<<((i/2)+6))){
 
                 // add calib
-                raw->a[i/2] = ((buf[sc] << 8) | buf[sc+1]) + calib[(i/2)+12];
+                raw->a[(i/2)+3] = (buf[i] | (buf[i+1]<<8)) + calib_hi_g[i/2];
 
             }
 
@@ -231,6 +270,7 @@ void imu_triple::read_raw(imu_raw *raw, uint16_t saturate){
         
     }
 
+      return saturate;
 }
 
 void imu_triple::read_float(imu_float *flt){
@@ -239,7 +279,7 @@ void imu_triple::read_float(imu_float *flt){
     uint16_t saturate;
 
     /* Get raw data and saturation bitfield */
-    imu_triple.read_raw(&raw, saturate);
+    saturate = this->read_raw(&raw);
 
     /* Convert data from the gyroscopes */
     for(int i=0;i<3;i++){
@@ -259,7 +299,7 @@ void imu_triple::read_float(imu_float *flt){
         if((1<<i)&saturate){
 
             if((1<<(i+3))&saturate){
-                flt->a[i] = raw.a[i]*LSM6DSL_C_ACC_CONV;
+                flt->a[i] = raw.a[i]*H3LIS331DL_ACC_CONV;
             }
             else{
                 flt->a[i] = raw.a[i]*LSM6DSL_C_ACC_CONV;
@@ -274,19 +314,19 @@ void imu_triple::read_float(imu_float *flt){
 
 }
 
-void imu_triple::read_float(imu_float *flt, imu_raw *raw, uint16_t saturate){
+uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
 
     /* Get raw data and saturation bitfield */
-    imu_triple.read_raw(&raw, saturate);
+    uint16_t saturate = this->read_raw(raw);
 
     /* Convert data from the gyroscopes */
     for(int i=0;i<3;i++){
 
         if((1<<i)&saturate){
-            flt->a[i] = raw.a[i]*LSM6DSL_C_GYR_CONV;
+            flt->a[i] = raw->a[i]*LSM6DSL_C_GYR_CONV;
         }
         else{
-            flt->a[i] = raw.a[i]*LSM6DSL_F_GYR_CONV;
+            flt->a[i] = raw->a[i]*LSM6DSL_F_GYR_CONV;
         }
 
     }
@@ -297,17 +337,19 @@ void imu_triple::read_float(imu_float *flt, imu_raw *raw, uint16_t saturate){
         if((1<<i)&saturate){
 
             if((1<<(i+3))&saturate){
-                flt->a[i] = raw.a[i]*LSM6DSL_C_ACC_CONV;
+                flt->a[i+3] = raw->a[i+3]*H3LIS331DL_ACC_CONV;
             }
             else{
-                flt->a[i] = raw.a[i]*LSM6DSL_C_ACC_CONV;
+                flt->a[i+3] = raw->a[i+3]*LSM6DSL_C_ACC_CONV;
             }
 
         }
         else{
-            flt->a[i] = raw.a[i]*LSM6DSL_F_ACC_CONV;
+            flt->a[i+3] = raw->a[i+3]*LSM6DSL_F_ACC_CONV;
         }
 
     }
+
+  return saturate;
 
 }

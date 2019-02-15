@@ -8,18 +8,19 @@
 #define _LSM6DSL_PAIR_H
 
 #include <Arduino.h>
+#include <stdint.h>
 
 /* Register definitions */
 #define LSM6DSL_WHO_AM_I        0x0F
 #define LSM6DSL_CTRL1_XL        0x10
 #define LSM6DSL_CTRL2_G         0x11
-#define LSM6DSL_OUT_START       0x22
+#define LSM6DSL_OUT_START       0xA2
 #define LSM6DSL_OUT_TEMP        0x20
 
 #define H3LIS331DL_WHO_AM_I     0x0F
-#define H3LIS331DL_CTRL1        0x10
-#define H3LIS331DL_CTRL4        0x11
-#define H3LIS331DL_OUT_START    0x28
+#define H3LIS331DL_CTRL1        0x20
+#define H3LIS331DL_CTRL4        0x23
+#define H3LIS331DL_OUT_START    0xA8
 
 /* Linear offsets (m) */
 #define LSM6DSL_C_X         -0.015
@@ -29,6 +30,19 @@
 #define H3LIS331DL_C_X      0
 #define H3LIS331DL_C_Y      -0.015
 #define H3LIS331DL_C_Z      0
+
+/* Conversion factors */
+#define LSM6DSL_F_GYR_CONV      0.00875
+#define LSM6DSL_C_GYR_CONV      0.07
+
+#define LSM6DSL_F_ACC_CONV      0.000062
+#define LSM6DSL_C_ACC_CONV      0.000496     
+#define H3LIS331DL_ACC_CONV     0.0031
+
+/* SPI Settings */
+#define SPI_SPEED       10000000
+#define SPI_ENDIAN      MSBFIRST
+#define SPI_MODE        SPI_MODE3
 
 /* Data structures */
 typedef union {
@@ -61,6 +75,7 @@ typedef union{
 
 } imu_float;
 
+/*
 typedef union{
 
     struct s{
@@ -88,8 +103,9 @@ typedef union{
     int8_t a[15];
 
 } imu_calib
+*/
 
-
+/*
 typedef enum{
     LSM6DSL_ACC_2G      = 0x00;
     LSM6DSL_ACC_4G      = 0x10;
@@ -109,13 +125,15 @@ typedef enum{
     H3LIS331DL_ACC_200G = 0x10;
     H3LIS331DL_ACC_400G = 0x11;
 } h3lis331dl_acc_range_t;
+*/
 
 typedef enum{
-    LSM6DSL_FINE;
-    LSM6DSL_COARSE;
-    H3LIS331DL;
-} imu_device_t
+    LSM6DSL_FINE,
+    LSM6DSL_COARSE,
+    H3LIS331DL,
+} imu_device_t;
 
+/*
 typedef enum{
     IMU_GYR_X;
     IMU_GYR_Y;
@@ -124,6 +142,7 @@ typedef enum{
     IMU_ACC_Y;
     IMU_ACC_Z;
 } axis_t;
+*/
 
 /* Sensor Class */
 class imu_triple
@@ -131,26 +150,22 @@ class imu_triple
 	public:
 		
         imu_triple(int cs_fine, int cs_coarse, int cs_hi_g);
+        //void init();
         void set(imu_device_t dev, uint8_t addr, uint8_t value);
         uint8_t get(imu_device_t dev, uint8_t addr);
-        void set_calib(imu_device_t dev, int16_t *calib);
-        int16_t get_axis_raw(imu_device_t dev, axis_t axis);
-        void read_raw(union imu_raw);
-        void read_float(union imu_float);
-        void read_float(union imu_float, union imu_raw);
+        void read_dev(imu_device_t dev, imu_raw *raw);
+        uint16_t read_raw(imu_raw *raw);
+        void read_float(imu_float *flt);
+        uint16_t read_float(imu_float *flt, imu_raw *raw);
 
 	private:
 
-        int16_t[6] calib_fine;
-        int16_t[6] calib_coarse;
-        int16_t[3] calib_hi_g;
+        int16_t calib_fine[6];
+        int16_t calib_coarse[6];
+        int16_t calib_hi_g[3] ;
         int cs_f;
         int cs_c;
         int cs_h;
-        uint8_t saturate;
-        float[2]    convert_fine;
-        float[2]    convert_coarse;
-        float       convert_hi_g;
 
 };
 
