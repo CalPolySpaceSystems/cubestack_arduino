@@ -8,41 +8,62 @@
  *  The tasks are listed in the CPSS Data Collection Task Tree.xlsx
  *  
  */
+
+// Define operating modes
+//#define DEBUG
+//#define CALIB_CONTINUE
+
+// Define task scheduler resolution
+#define _TASK_MICRO_RES
  
- // Includes
+// External Libraries
 #include <TaskScheduler.h>
 
+// Sensor Libraries
+#include "sensor/imu_triple.h"
+#include "sensor/lis2mdl.h"
+//#include "sensor/ms56xx.h"
+//#include "sensor/ubx8.h"
+
+// Other libraries
+
 // Pin Definitions
+#define CS_IMU_FINE       2
+#define CS_IMU_COARSE     3
+#define CS_IMU_HI_G       4
 
+// Sensor Class Initializations
+imu_triple imu_data = imu_triple(CS_IMU_FINE,CS_IMU_COARSE,CS_IMU_HI_G);
 
-// Variable Definitions
+// Sensor Data Structures
+//imu_raw     i_raw;  // Unneeded for IMU/Filtering
+imu_float   i_flt;
+mag_float   m_flt;
 
-
-// Sensor Setup
-
+// Other Variables
+uint16_t sat;
 
 // Callback methods for Task Scheduler
-void accelCallback();
-void gyroCallback();
+void imuCallback();
+//void gyroCallback();
 void magCallback();
-void baroCallback();
-void gpsCallback();
+//void baroCallback();
+//void gpsCallback();
 void sendCallback();
 void saveCallback();
 
 // Task Definitions
 // Task (intervals X 100 ms) for testing
-Task pollAccelerometer(500, TASK_FOREVER, &accelCallback);
-Task pollGyroscope(500, TASK_FOREVER, &gyroCallback);
+Task pollImu(1000, TASK_FOREVER, &imuCallback);
 Task pollMagnatometer(10000, TASK_FOREVER, &magCallback);
-Task pollBarometer(30000, TASK_FOREVER, &baroCallback);
-Task pollGPS(50000, TASK_FOREVER, &gpsCallback);
-Task sendData(10000, TASK_FOREVER, &sendCallback);
-Task saveData(10000, TASK_FOREVER, &saveCallback);
+//Task pollBarometer(30000, TASK_FOREVER, &baroCallback);
+//Task pollGPS(50000, TASK_FOREVER, &gpsCallback);
+//Task sendData(10000, TASK_FOREVER, &sendCallback);
+//Task saveData(10000, TASK_FOREVER, &saveCallback);
 
 Scheduler runner;
 
-void accelCallback() {
+void imuCallback() {
     Serial.print("pollAccelerometer X: ");
     Serial.println(millis());
 
@@ -53,16 +74,6 @@ void accelCallback() {
     Serial.println(millis());
 }
 
-void gyroCallback() {
-    Serial.print("pollGyroscope X: ");
-    Serial.println(millis());
-    
-    Serial.print("pollGyroscope Y: ");
-    Serial.println(millis());
-    
-    Serial.print("pollGyroscope Z: ");
-    Serial.println(millis()); 
-}
 
 void magCallback() {
     Serial.print("pollMagnatometer X: ");
@@ -75,6 +86,7 @@ void magCallback() {
     Serial.println(millis()); 
 }
 
+/*
 void baroCallback() {
   
     Serial.print("pollBarometer Pressure: ");
@@ -97,6 +109,7 @@ void gpsCallback() {
     Serial.print("pollGPS Validation: ");
     Serial.println(millis());
 }
+*/
 
 void sendCallback() {
     Serial.print("sendData Compile Packet: ");
@@ -111,7 +124,20 @@ void saveCallback() {
     Serial.println(millis());
 }
 
+/* Setup */
 void setup () {
+
+  /* Perform calibration if connected to USB */
+
+
+
+
+  /* Save calibration data */
+
+
+
+
+  
   Serial.begin(9600);
   Serial.println("Scheduler TEST");
 
@@ -166,7 +192,7 @@ void setup () {
 
 }
 
-
+/* Loop just runs the scheduler */
 void loop () {
   runner.execute();
 }
