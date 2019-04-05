@@ -17,30 +17,23 @@ imu_triple::imu_triple(int cs_fine, int cs_coarse, int cs_hi_g){
     
 }
 
-/* TODOS
-*   
-*   read devices
-*   set calibration, define calib array 
-*   apply centripetal accel to float values
-*
-*/
-
-/* Access internal addresses *
+/* Access internal addresses */
 void imu_triple::init(){
   
-    /* Init fine sensor *
-    imu_triple.set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x70);
-    imu_triple.set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x70);
+  /* Init fine sensor */
+  this->set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x70);
+  this->set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x70);
 
-    /* Init coarse sensor *
-    imu_triple.set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x7C);
-    imu_triple.set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x7C);
+  /* Init coarse sensor */
+  this->set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x74);
+  this->set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x7C);
 
-    /* Init hi-g sensor *
-    imu_triple.set(H3LIS331DL,H3LIS331DL_CTRL1,0x37);
+  /* Init hi-g sensor */
+  this->set(H3LIS331DL,H3LIS331DL_CTRL1,0x3F);
+  this->set(H3LIS331DL,H3LIS331DL_CTRL4,0x00);
+
 
 }
-*/
 
 /* Access internal addresses */
 void imu_triple::set(imu_device_t dev, uint8_t addr, uint8_t value){
@@ -102,6 +95,113 @@ uint8_t imu_triple::get(imu_device_t dev, uint8_t addr){
 
 }
 
+void imu_triple::calibrate(int n_samples){
+
+    imu_raw raw;
+
+    // Read each sensor and store its 
+    for (int i=0;i<3;i++){
+
+        for (int j=0; j<n_samples; j++){
+            this->read_dev((imu_device_t)i,&raw);
+            
+            switch (i){
+
+                case 0: // LSM6DSL Fine
+                    for (int k=0;k<5;k++){
+                        calib_fine[k] += (int16_t)(round(raw.a[k]/n_samples));
+                    }
+                    calib_coarse[5] += (int16_t)(round((raw.a[5]-16384)/n_samples));
+                    break;
+
+                case 1: // LSM6DSL Coarse
+
+                    for (int k=0;k<5;k++){
+                        calib_coarse[k] += (int16_t)(round(raw.a[k]/n_samples));
+                    }
+                    calib_coarse[5] += (int16_t)(round((raw.a[5]-2048)/n_samples));
+                    break;
+
+                case 2: // H3LISS31DL
+
+                    for (int k=3;k<5;k++){
+                        calib_hi_g[k] += (int16_t)(round(raw.a[k]/n_samples));
+                    }
+                    calib_hi_g[5] += (int16_t)(round((raw.a[5]-328)/n_samples));
+                    break;
+
+            }
+        
+            delay(10);
+
+        }
+
+    }
+
+}
+
+void imu_triple::calib_set(imu_device_t dev, int16_t calib[]){
+    
+    /* Decide which device to set calibration for */
+    if (dev == LSM6DSL_FINE){
+        
+        for (int i=0; i<6;i++){
+
+            calib_fine[i] = calib[i];
+
+        }
+    }
+    
+    else if(dev == LSM6DSL_COARSE){
+        
+        for (int i=0; i<6;i++){
+
+            calib_coarse[i] = calib[i];
+
+        }
+
+    }
+
+    else{
+        for (int i=0; i<3;i++){
+
+            calib_hi_g[i] = calib[i];
+
+        }
+    }
+
+}
+
+void imu_triple::calib_get(imu_device_t dev, int16_t calib[]){
+    
+    /* Decide which device to get calibration from */
+    if (dev == LSM6DSL_FINE){
+        
+        for (int i=0; i<6;i++){
+            calib[i] = calib_fine[i];
+        }
+    }
+    
+    else if(dev == LSM6DSL_COARSE){
+        
+        for (int i=0; i<6;i++){
+
+            calib[i] = calib_coarse[i];
+
+        }
+
+    }
+
+    else{
+        for (int i=0; i<3;i++){
+
+            calib[i] = calib_hi_g[i];
+
+        }
+    }
+
+}
+
 /* Reads raw values from the given device */
 void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
 
@@ -129,19 +229,20 @@ void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
     else{
         regs = 6;
         cs_pin = cs_h;
-       out_start = H3LIS331DL_OUT_START;
+        out_start = H3LIS331DL_OUT_START;
         acc_ofs = 3;
     }
 
     /* Fill buffer with all addresses to read from */
     for (uint8_t i=0;i<regs;i++){
-        buf[i] = out_start+i;
+        buf[i] = out_start+i+1;
     }
 
     /* Read the desired sensor */
     SPI.beginTransaction(SPISettings(SPI_SPEED,SPI_ENDIAN,SPI_MODE));
     
     digitalWrite(cs_pin, LOW);
+    SPI.transfer(out_start);
     SPI.transfer(buf,regs);
     digitalWrite(cs_pin, HIGH);
 
@@ -150,7 +251,7 @@ void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
     for (uint8_t i=0;i<regs;i=i+2){
         
         /* Put buffer into raw data array */
-        raw->a[(i/2)+acc_ofs] = ((buf[i] << 8) | buf[i+1]);
+        raw->a[(i/2)+acc_ofs] = (buf[i] | (buf[i+1]<<8));
 
     }
 
@@ -188,7 +289,7 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
             saturate |= (1<<(i/2));
         }
         else{
-            raw->a[i/2] = (raw->a[i/2] + calib_fine[i/2]);
+            raw->a[i/2] -= calib_fine[i/2];
         }
     
     }
@@ -197,6 +298,8 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
     /* If necessary, read from the coarse A/G */
     if (saturate){
+
+        //SerialUSB.println("COARSE");
 
         uint8_t ind_new;
 
@@ -215,6 +318,7 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
         SPI.endTransaction();
 
+
         /* Write new data into the array of raw values only if they are saturated*/
         for (uint8_t i=0;i<12;i=i+2){
     
@@ -226,10 +330,10 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
                 /* Find if accelerometer values are saturated */
                 if ((abs(raw->a[i/2] > 32000))&(i>5)){
-                    saturate |= (1<<((i/2)+6));
+                    saturate |= (1<<((i/2)+3));
                 }
                 else{
-                    raw->a[i/2] = (raw->a[i/2] + calib_coarse[i/2]);
+                    raw->a[i/2] -= calib_coarse[i/2];
                 }
                 
             }
@@ -238,16 +342,21 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
     }
 
+    //saturate = 0b111000000;
+
     /* If necessary, read from the high-g sensor */
     if (saturate & 0b111000000){
+
+        //SerialUSB.println("HI G");
 
         /* Fill buffer with all addresses to read from */
         for (uint8_t i=0;i<6;i++){
             buf[i] = H3LIS331DL_OUT_START+i+1;
+            //SerialUSB.println(buf[i],HEX);
         }
 
         /* Retieve data from hi-g sensor */
-        SPI.beginTransaction(SPISettings(5000000,SPI_ENDIAN,SPI_MODE));
+        SPI.beginTransaction(SPISettings(10000000,SPI_ENDIAN,SPI_MODE));
     
         digitalWrite(cs_h, LOW);
         SPI.transfer(H3LIS331DL_OUT_START);
@@ -259,19 +368,24 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
         /* Put the hi-g values into the raw data array if necessary */
         for (uint8_t i=0;i<6;i=i+2){
     
-            if (saturate && (1<<((i/2)+6))){
+            if (saturate & (1<<((i/2)+6))){
 
+                //SerialUSB.println(buf[i]);
+                
                 // add calib
-                raw->a[(i/2)+3] = (buf[i] | (buf[i+1]<<8)) + calib_hi_g[i/2];
+                raw->a[(i/2)+3] = (buf[i] | (buf[i+1]<<8)) - calib_hi_g[i/2];
 
             }
 
         }
+
+        //SerialUSB.println(raw->a[3]);
         
     }
 
       return saturate;
 }
+
 
 void imu_triple::read_float(imu_float *flt){
 
@@ -296,12 +410,14 @@ void imu_triple::read_float(imu_float *flt){
     /* Convert the data from the accelerometer */
     for(int i=0;i<3;i++){
 
-        if((1<<i)&saturate){
+        if((1<<(i+3))&saturate){
 
-            if((1<<(i+3))&saturate){
+            if((1<<(i+6))&saturate){
+                //SerialUSB.println("High Acc");
                 flt->a[i] = raw.a[i]*H3LIS331DL_ACC_CONV;
             }
             else{
+                //SerialUSB.println("COARSE ADJ");
                 flt->a[i] = raw.a[i]*LSM6DSL_C_ACC_CONV;
             }
 
@@ -319,6 +435,7 @@ uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
     /* Get raw data and saturation bitfield */
     uint16_t saturate = this->read_raw(raw);
 
+
     /* Convert data from the gyroscopes */
     for(int i=0;i<3;i++){
 
@@ -334,9 +451,9 @@ uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
     /* Convert the data from the accelerometer */
     for(int i=0;i<3;i++){
 
-        if((1<<i)&saturate){
+        if((1<<(i+3))&saturate){
 
-            if((1<<(i+3))&saturate){
+            if((1<<(i+6))&saturate){
                 flt->a[i+3] = raw->a[i+3]*H3LIS331DL_ACC_CONV;
             }
             else{
@@ -351,5 +468,4 @@ uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
     }
 
   return saturate;
-
 }
