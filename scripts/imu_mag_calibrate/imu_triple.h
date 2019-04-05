@@ -4,8 +4,8 @@
  *
  */
 
-#ifndef _LSM6DSL_PAIR_H
-#define _LSM6DSL_PAIR_H
+#ifndef _IMU_TRIPLE_H
+#define _IMU_TRIPLE_H
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -20,7 +20,7 @@
 #define H3LIS331DL_WHO_AM_I     0x0F
 #define H3LIS331DL_CTRL1        0x20
 #define H3LIS331DL_CTRL4        0x23
-#define H3LIS331DL_OUT_START    0xA8
+#define H3LIS331DL_OUT_START    0xE8
 
 /* Linear offsets (m) */
 #define LSM6DSL_C_X         -0.015
@@ -36,8 +36,8 @@
 #define LSM6DSL_C_GYR_CONV      0.07
 
 #define LSM6DSL_F_ACC_CONV      0.000062
-#define LSM6DSL_C_ACC_CONV      0.000496     
-#define H3LIS331DL_ACC_CONV     0.0031
+#define LSM6DSL_C_ACC_CONV      0.000493     
+#define H3LIS331DL_ACC_CONV     0.00305
 
 /* SPI Settings */
 #define SPI_SPEED       10000000
@@ -47,13 +47,13 @@
 /* Data structures */
 typedef union {
 
-    struct s{
-        int16_t gyr_xr;
-        int16_t gyr_yr;
-        int16_t gyr_zr;
-        int16_t acc_xr;
-        int16_t acc_yr;
-        int16_t acc_zr;
+    struct {
+        int16_t gyr_x;
+        int16_t gyr_y;
+        int16_t gyr_z;
+        int16_t acc_x;
+        int16_t acc_y;
+        int16_t acc_z;
     }__attribute__((packed));
 
     int16_t a[6];
@@ -62,13 +62,13 @@ typedef union {
 
 typedef union{
 
-    struct s{
-        float gyr_xf;
-        float gyr_yf;
-        float gyr_zf;
-        float acc_xf;
-        float acc_yf;
-        float acc_zf;
+    struct {
+        float gyr_x;
+        float gyr_y;
+        float gyr_z;
+        float acc_x;
+        float acc_y;
+        float acc_z;
     }__attribute__((packed));
 
     float a[6];
@@ -150,8 +150,11 @@ class imu_triple
 	public:
 		
         imu_triple(int cs_fine, int cs_coarse, int cs_hi_g);
-        //void init();
+        void init();
         void set(imu_device_t dev, uint8_t addr, uint8_t value);
+        void calibrate(int n_samples);
+        void calib_get(imu_device_t dev, int16_t calib[]);
+        void calib_set(imu_device_t dev, int16_t calib[]);
         uint8_t get(imu_device_t dev, uint8_t addr);
         void read_dev(imu_device_t dev, imu_raw *raw);
         uint16_t read_raw(imu_raw *raw);
