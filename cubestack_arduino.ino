@@ -21,12 +21,13 @@
 #include <TaskScheduler.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <math.h>
 #include <FlashStorage.h>
 
 /* Sensor Libraries */
 #include "src/sensor/imu_triple.h"
 #include "src/sensor/lis2mdl.h"
-//#include "sensor/ms56xx.h"
+#include "src/sensor/barometer_MS56xx/barometer_MS56xx.h" //this directory needs to be changed?
 //#include "sensor/ubx8.h"
 
 /* Other libraries */
@@ -41,12 +42,12 @@ int16_t calib_imu_hi_g[3] = {0,0,0};
 int16_t calib_mag[3] = {0,0,0};
 
 /* Pin Definitions */
-#define CS_IMU_FINE       2             // SPI Chip Select for the Fine LSM6DSL Accelerometer/Gyroscope
-#define CS_IMU_COARSE     3             // SPI Chip Select for the Coarse LSM6DSL Accelerometer/Gyroscope
-#define CS_IMU_HI_G       4             // SPI Chip Select for the H3LIS331DL High-G Accelerometer
-#define CS_FLASH          8             // SPI Chip Select for the SST26VF064B Flash Memory Chip
-#define HOLD_FLASH        6             // Digital Pin for the SST26VF064B Flash Memory HOLD Pin 
-#define CS_SD             9             // SPI Chip Select for the SD Card Slot
+#define CS_IMU_FINE       A3             // SPI Chip Select for the Fine LSM6DSL Accelerometer/Gyroscope
+#define CS_IMU_COARSE     A4             // SPI Chip Select for the Coarse LSM6DSL Accelerometer/Gyroscope
+#define CS_IMU_HI_G       A5             // SPI Chip Select for the H3LIS331DL High-G Accelerometer
+#define CS_FLASH          5             // SPI Chip Select for the SST26VF064B Flash Memory Chip
+#define HOLD_FLASH        4             // Digital Pin for the SST26VF064B Flash Memory HOLD Pin 
+#define CS_SD             4             // SPI Chip Select for the SD Card Slot
 
 #define IO_LS             7            // Digital Pin for the loudspeaker
 #define IO_LED            LED_BUILTIN   // Digital Pin for the LED
@@ -54,7 +55,7 @@ int16_t calib_mag[3] = {0,0,0};
 /* Other operational definitions */
 #define CALIB_READS       32
 #define CALIB_SECONDS     30
-#define CALIB_TIMEOUT     5
+#define CALIB_TIMEOUT     1
 
 /* Class definitions */
 Scheduler runner;
@@ -80,6 +81,8 @@ mag_float   m_flt;
 
 //imu_calib   i_cal;
 //mag_calib   m_cal;
+
+struct MS56xx_packet bar; //structure for barometer, added 4/19/19
 
 /* Calibration storage structures */
 
@@ -117,7 +120,9 @@ uint16_t imu_sat;
 // unneccessary if externally included?
 //void imuCallback();
 void magCallback();
-//void baroCallback();
+void baroCallback1(); //uncommented this 4/19/19
+void baroCallback2(); //added 4/20/19
+void baroCallback3(); //added 4/20/19
 //void gpsCallback();
 //void tapCallback();
 void margCallback();
@@ -125,7 +130,7 @@ void margCallback();
 /* Polling Task Definitions */
 //Task pollImu(1200, TASK_FOREVER, &imuCallback);
 Task pollMag(10000, TASK_FOREVER, &magCallback);
-//Task pollBaro(30000, TASK_FOREVER, &baroCallback);
+Task pollBaro(30000, TASK_FOREVER, &baroCallback1); //uncommented this 4/19/19
 //Task pollGPS(50000, TASK_FOREVER, &gpsCallback);
 //Task pollTap(#,#,#);
 
@@ -161,6 +166,7 @@ void setup () {
   /* Initialize Sensors */
   imu.init();
   mag.init();
+  initMS56xx("MS5607"); //call the initialize function with the specified barometer model
 
   beep(IO_LS,220,400);
   beep(IO_LS,440,400);
@@ -179,7 +185,7 @@ void setup () {
       /* IMU Calibrate */
       // Display instructions
       SerialUSB.println("Level the unit and press any key to begin calibration."); 
-      while(!SerialUSB.available()){}
+      while(!SerialUSB.available()){} 
 
       // Perform calibration
       imu.calibrate(CALIB_READS);
@@ -272,7 +278,7 @@ void setup () {
   beep(IO_LS,660,200);
 
   
-  while(!SerialUSB){;}
+  while(!SerialUSB){;} 
 
   /* Retrieve calibration values from flash */
   sensor_calib = calib_store.read();
@@ -306,13 +312,13 @@ void setup () {
 
   //runner.addTask(pollImu);
   runner.addTask(pollMag);
-  //runner.addTask(pollBaro);
+  runner.addTask(pollBaro); //uncommented this 4/19/19
   //runner.addTask(pollGPS);
 
   #ifdef MODE_COATS
   //runner.addtask(tlmImu);
   //runner.addtask(tlmMag);
-  //runner.addtask(tlmBaro);
+  //runner.addtask(tlmBaro); 
   //runner.addtask(tlmGPS);
   //runner.addtask(tlmTap);
   //runner.addtask(tlmStat);
@@ -331,7 +337,7 @@ void setup () {
   /* Enable Tasks */
   //pollImu.enable();
   pollMag.enable();
-  //pollBaro.enable();
+  pollBaro.enable(); //uncommented this 4/19/19
   //pollGPS.enable();
 
 
@@ -371,7 +377,7 @@ void imuCallback() {
   imu_sat = imu.read_float(&i_flt,&i_raw);
 
   #ifdef MODE_DEBU
-  SerialUSB.print(imu_micros);
+  SerialUSB.print(imu_micros); 
   SerialUSB.print(',');
   SerialUSB.print(i_flt.a[0]);
   SerialUSB.print(',');
@@ -414,6 +420,35 @@ void magCallback() {
   
 }
 
+//added baroCallback function 4/19/19 
+void baroCallback1() {
+  //intialize function is now in void setup() as of 4/20/19
+  primeTempMS56xx();
+  //delay(10);
+  pollBaro.setCallback(&baroCallback2);
+  pollBaro.delay(10000);
+}
+
+void baroCallback2() {
+  
+  readTempMS56xx(&bar);
+
+  primePressureMS56xx();
+  //delay(10);
+  pollBaro.setCallback(&baroCallback3);
+  pollBaro.delay(10000);
+}
+
+void baroCallback3() {
+  
+  readPressureMS56xx(&bar);
+
+  calcAltitudeMS56xx(&bar);
+  
+  String output = MS56xxToString(&bar);
+  SerialUSB.println(output);
+  pollBaro.setCallback(&baroCallback1);
+}
 /*______________Telemetry Callbacks______________________*/
 
 

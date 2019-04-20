@@ -2,9 +2,7 @@
 #define _BARO_H
 #include <Arduino.h>
 
-//For now we will assume we're using the MS5611 barometer, later
-//this library will be compatible with both the MS5611 and the 
-//MS5607
+//This library should be compatible with both the MS5611 and the MS5607
 
 //Note: all data reads must be primed and allow for a 10ms delay
 //after priming before reading.

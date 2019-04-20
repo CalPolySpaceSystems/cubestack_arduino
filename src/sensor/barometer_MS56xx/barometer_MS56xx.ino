@@ -1,16 +1,15 @@
 //Test Sketch for the Barometer library
 
-#include "barometer_MS56xx.h"
+#include "barometer_MS56xx.h" //add this -done
 #include <Wire.h>
 #include <math.h>
 
-struct MS56xx_packet bar;
+struct MS56xx_packet bar; //add this -done
 
 void setup() {
   Serial.begin(9600); //need to change this to SerialUSB.begin() if using a MKR ZERO
   Wire.begin();
-  pinMode(13, OUTPUT);
-
+  pinMode(13, OUTPUT); //add this? -not done, probably unnecessary 
 }
 
 void loop() {
