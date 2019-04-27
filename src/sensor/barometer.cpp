@@ -9,12 +9,14 @@
 #define BARO_RESET 		(0x1E)
 #define BARO_PROM_READ 	(0xA2)
 #define BAROMETER_ID 4
+#define MS5607 0
+#define MS5611 1
 
 // calibration data
 uint16_t C[7] = {0};
 
 // Initialize barometer from unknown state
-void initMS5607(void) {
+void initMS5607(bool baroModel) {
   // reset the barometer
   Wire.beginTransmission(BARO_ADDRESS);
   Wire.write(BARO_RESET);

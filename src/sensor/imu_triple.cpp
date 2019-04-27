@@ -259,10 +259,10 @@ void imu_triple::read_dev(imu_device_t dev, imu_raw *raw){
 }
 
 /* Read data */ 
-uint16_t imu_triple::read_raw(imu_raw *raw){
+void imu_triple::read_raw(imu_raw *raw){
     
     uint8_t buf[12];
-    uint16_t saturate = 0;
+    raw->sat = 0;
 
     /* Fill buffer with all addresses to read from */
     for (uint8_t i=0;i<12;i++){
@@ -286,7 +286,7 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
         /* Find if any values are saturated */
         if (abs(raw->a[i/2]) > 32000){
-            saturate |= (1<<(i/2));
+            raw->sat |= (1<<(i/2));
         }
         else{
             raw->a[i/2] -= calib_fine[i/2];
@@ -297,9 +297,7 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
     //SerialUSB.println(saturate);
 
     /* If necessary, read from the coarse A/G */
-    if (saturate){
-
-        //SerialUSB.println("COARSE");
+    if (raw->sat){
 
         uint8_t ind_new;
 
@@ -322,7 +320,7 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
         /* Write new data into the array of raw values only if they are saturated*/
         for (uint8_t i=0;i<12;i=i+2){
     
-            if ((saturate) & (1<<(i/2))){
+            if ((raw->sat) & (1<<(i/2))){
 
                 //SerialUSB.println(i);
               
@@ -330,7 +328,7 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
                 /* Find if accelerometer values are saturated */
                 if ((abs(raw->a[i/2] > 32000))&(i>5)){
-                    saturate |= (1<<((i/2)+3));
+                    raw->sat |= (1<<((i/2)+3));
                 }
                 else{
                     raw->a[i/2] -= calib_coarse[i/2];
@@ -342,12 +340,8 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
 
     }
 
-    //saturate = 0b111000000;
-
     /* If necessary, read from the high-g sensor */
-    if (saturate & 0b111000000){
-
-        //SerialUSB.println("HI G");
+    if (raw->sat & 0b111000000){
 
         /* Fill buffer with all addresses to read from */
         for (uint8_t i=0;i<6;i++){
@@ -368,22 +362,17 @@ uint16_t imu_triple::read_raw(imu_raw *raw){
         /* Put the hi-g values into the raw data array if necessary */
         for (uint8_t i=0;i<6;i=i+2){
     
-            if (saturate & (1<<((i/2)+6))){
+            if (raw->sat & (1<<((i/2)+6))){
 
-                //SerialUSB.println(buf[i]);
-                
                 // add calib
                 raw->a[(i/2)+3] = (buf[i] | (buf[i+1]<<8)) - calib_hi_g[i/2];
 
             }
 
         }
-
-        //SerialUSB.println(raw->a[3]);
         
     }
 
-      return saturate;
 }
 
 
@@ -393,12 +382,12 @@ void imu_triple::read_float(imu_float *flt){
     uint16_t saturate;
 
     /* Get raw data and saturation bitfield */
-    saturate = this->read_raw(&raw);
+    this->read_raw(&raw);
 
     /* Convert data from the gyroscopes */
     for(int i=0;i<3;i++){
 
-        if((1<<i)&saturate){
+        if((1<<i)&raw.sat){
             flt->a[i] = raw.a[i]*LSM6DSL_C_GYR_CONV;
         }
         else{
@@ -410,9 +399,9 @@ void imu_triple::read_float(imu_float *flt){
     /* Convert the data from the accelerometer */
     for(int i=0;i<3;i++){
 
-        if((1<<(i+3))&saturate){
+        if((1<<(i+3))&raw.sat){
 
-            if((1<<(i+6))&saturate){
+            if((1<<(i+6))&raw.sat){
                 //SerialUSB.println("High Acc");
                 flt->a[i] = raw.a[i]*H3LIS331DL_ACC_CONV;
             }
@@ -430,16 +419,16 @@ void imu_triple::read_float(imu_float *flt){
 
 }
 
-uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
+void imu_triple::read_float(imu_float *flt, imu_raw *raw){
 
     /* Get raw data and saturation bitfield */
-    uint16_t saturate = this->read_raw(raw);
+    this->read_raw(raw);
 
 
     /* Convert data from the gyroscopes */
     for(int i=0;i<3;i++){
 
-        if((1<<i)&saturate){
+        if((1<<i)&raw->sat){
             flt->a[i] = raw->a[i]*LSM6DSL_C_GYR_CONV;
         }
         else{
@@ -451,9 +440,9 @@ uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
     /* Convert the data from the accelerometer */
     for(int i=0;i<3;i++){
 
-        if((1<<(i+3))&saturate){
+        if((1<<(i+3))&raw->sat){
 
-            if((1<<(i+6))&saturate){
+            if((1<<(i+6))&raw->sat){
                 flt->a[i+3] = raw->a[i+3]*H3LIS331DL_ACC_CONV;
             }
             else{
@@ -467,5 +456,4 @@ uint16_t imu_triple::read_float(imu_float *flt, imu_raw *raw){
 
     }
 
-  return saturate;
 }

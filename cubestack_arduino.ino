@@ -32,7 +32,10 @@
 /* Other libraries */
 //#include "src/util/sensor_utils.h"
 #include "src/util/io_utils.h"
-#include "src/state estimation/madgwick_marg.h"
+//#include "src/state estimation/madgwick_marg.h"
+
+/* COATS */
+#include "external/coats.h"
 
 /* Calibration Values */
 int16_t calib_imu_fine[6] = {0,0,0,0,0,0};
@@ -60,11 +63,11 @@ int16_t calib_mag[3] = {0,0,0};
 Scheduler runner;
 
 #ifdef MODE_COATS
-//coats telemetry = coats(ENDING,COUNTER_DIS);
+coats telemetry = coats(ENDING,false);
 #endif
 
 #ifdef MODE_SERIAL2
-//Uart Serial2 (&sercom2, 3, 2; SERCOM_RX_PAD_1, UART_TX_PAD_2);
+Uart Serial2 (&sercom2, 3, 2; SERCOM_RX_PAD_1, UART_TX_PAD_2);
 #endif
 
 /* Sensor Class Initializations */
@@ -123,7 +126,7 @@ void magCallback();
 void margCallback();
 
 /* Polling Task Definitions */
-//Task pollImu(1200, TASK_FOREVER, &imuCallback);
+Task pollImu(1200, TASK_FOREVER, &imuCallback);
 Task pollMag(10000, TASK_FOREVER, &magCallback);
 //Task pollBaro(30000, TASK_FOREVER, &baroCallback);
 //Task pollGPS(50000, TASK_FOREVER, &gpsCallback);
@@ -134,7 +137,7 @@ Task pollMag(10000, TASK_FOREVER, &magCallback);
 /* Flash Task Definitions */
 
 /* Other Task Definitions */
-Task margEst(1200, TASK_FOREVER, &margCallback);
+//Task margEst(1200, TASK_FOREVER, &margCallback);
 
 /*____________________Setup___________________*/
 void setup () {
@@ -158,12 +161,37 @@ void setup () {
   pinMode(IO_LS,OUTPUT);
   digitalWrite(IO_LS,LOW);
 
+  
+  /* Initialize coats telemetry */
+  #ifdef MODE_COATS
+  
+  //telemetry.addTlm(IMU_ID,&imu_data.a,sizeof(imu_data));
+  //telemetry.addTlm(MAG_ID,&imu_data.a,sizeof(imu_data));
+  //telemetry.addTlm(BARO_ID,&imu_data.a,sizeof(imu_data));
+  //telemetry.addTlm(GPS_ID,&imu_data.a,sizeof(imu_data));
+  //telemetry.addTlm(TAP_ID,&imu_data.a,sizeof(imu_data));
+
+  //telemetry.serialInit(Serial1,230400);
+
+  // Transmit startup status
+
+  #endif
+  
+  beep(IO_LS,220,400);
+  
   /* Initialize Sensors */
   imu.init();
   mag.init();
 
-  beep(IO_LS,220,400);
   beep(IO_LS,440,400);
+
+  /* Initialize External Flash */
+
+  #ifdef MODE_FLASH
+
+
+  #endif
+
   beep(IO_LS,660,400);
 
   /* Retrieve calibration values from flash */
@@ -174,7 +202,15 @@ void setup () {
     
     if (SerialUSB){
     
-      delay(1000);
+      delay(500);
+
+      /* Flash Dump */
+      // Check for flash data
+
+      // Print instructions
+      SerialUSB.println("Level the unit and press any key to begin calibration."); 
+      while(!SerialUSB.available()){}
+
       
       /* IMU Calibrate */
       // Display instructions
@@ -288,26 +324,16 @@ void setup () {
   imu.calib_set(H3LIS331DL,sensor_calib.imu_hi_g);
   mag.calib_set(sensor_calib.mag);
 
-  #ifdef MODE_COATS
-  
-  /* Initialize coats telemetry */
-  //telemetry.addTlm(IMU_ID,&imu_data.a,sizeof(imu_data));
-  //telemetry.addTlm(MAG_ID,&imu_data.a,sizeof(imu_data));
-  //telemetry.addTlm(BARO_ID,&imu_data.a,sizeof(imu_data));
-  //telemetry.addTlm(GPS_ID,&imu_data.a,sizeof(imu_data));
-  //telemetry.addTlm(TAP_ID,&imu_data.a,sizeof(imu_data));
 
-  //telemetry.serialInit(Serial1,230400);
-
-  #endif
-  
   /* Initialize Tasks and Scheduler */
   runner.init();
 
-  //runner.addTask(pollImu);
+  runner.addTask(pollImu);
   runner.addTask(pollMag);
   //runner.addTask(pollBaro);
   //runner.addTask(pollGPS);
+
+  //runner.addTask(launchDetect);
 
   #ifdef MODE_COATS
   //runner.addtask(tlmImu);
@@ -370,7 +396,7 @@ void imuCallback() {
 
   imu_sat = imu.read_float(&i_flt,&i_raw);
 
-  #ifdef MODE_DEBU
+  #ifdef MODE_DEBUG
   SerialUSB.print(imu_micros);
   SerialUSB.print(',');
   SerialUSB.print(i_flt.a[0]);
@@ -400,7 +426,7 @@ void magCallback() {
 
   mag.read_float(&m_flt,&m_raw);
 
-  #ifdef MODE_DEBU
+  #ifdef MODE_DEBUG
   
   // Print all data
   SerialUSB.print(mag_micros);
@@ -423,6 +449,22 @@ void magCallback() {
 
 /*_______________State Estimation Callbacks______________*/
 
+void launchCallback(){
+
+  // See if continuous g-force is present
+
+  
+
+  // Initiate flash recording processes
+
+
+  // Change rate of telemetry downlink
+
+
+  // Terminate this process
+  
+}
+
 void margCallback() {
 
   uint32_t est_micros = micros();
@@ -439,8 +481,8 @@ void margCallback() {
   #ifdef MODE_DEBUG
   
   // Print all data
-  //SerialUSB.print(est_micros);
-  //SerialUSB.print(',');
+  SerialUSB.print(est_micros);
+  SerialUSB.print(',');
   SerialUSB.print(rpy[0]);
   SerialUSB.print(',');
   SerialUSB.print(rpy[1]);
