@@ -54,9 +54,10 @@ typedef union {
         int16_t acc_x;
         int16_t acc_y;
         int16_t acc_z;
+        int16_t sat;
     }__attribute__((packed));
 
-    int16_t a[6];
+    int16_t a[7];
 
 } imu_raw;
 
@@ -74,36 +75,6 @@ typedef union{
     float a[6];
 
 } imu_float;
-
-/*
-typedef union{
-
-    struct s{
-
-        int8_t gyrf_x;
-        int8_t gyrf_y;
-        int8_t gyrf_z;
-        int8_t accf_x;
-        int8_t accf_y;
-        int8_t accf_z;
-    
-        int8_t gyrc_x;
-        int8_t gyrc_y;
-        int8_t gyrc_z;
-        int8_t accc_x;
-        int8_t accc_y;
-        int8_t accc_z;
-
-        int8_t acch_x;
-        int8_t acch_y;
-        int8_t acch_z;
-
-    }
-
-    int8_t a[15];
-
-} imu_calib
-*/
 
 /*
 typedef enum{
@@ -157,9 +128,9 @@ class imu_triple
         void calib_set(imu_device_t dev, int16_t calib[]);
         uint8_t get(imu_device_t dev, uint8_t addr);
         void read_dev(imu_device_t dev, imu_raw *raw);
-        uint16_t read_raw(imu_raw *raw);
+        void read_raw(imu_raw *raw);
         void read_float(imu_float *flt);
-        uint16_t read_float(imu_float *flt, imu_raw *raw);
+        void read_float(imu_float *flt, imu_raw *raw);
 
 	private:
 

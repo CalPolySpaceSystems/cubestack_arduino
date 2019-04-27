@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "C:\\\\Users\\\\patri\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\arduino\\\\tools\\\\**",
+                "C:\\\\Users\\\\patri\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\arduino\\\\hardware\\\\samd\\\\1.6.19\\\\**"
+            ],
+            "forcedInclude": [
+                "C:\\\\Users\\\\patri\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\arduino\\\\hardware\\\\samd\\\\1.6.19\\\\cores\\\\arduino\\\\Arduino.h"
+            ],
+            "intelliSenseMode": "msvc-x64",
+            "cStandard": "c11"
+        }
+    ],
+    "version": 4
+}
