@@ -5,26 +5,38 @@
 
 //#define WORD_8BIT
 
-#define CNT_ENABLE (1)
-#define CNT_DISABLE (0)
+#define STATUS_ENABLE (1)
+#define STATUS_DISABLE (0)
 
+// Define checksum settings
+#define NONE    0
+#define XOR     1
+#define CRC8    2
 
+// Status
 #define STATUS_ID 129
+#define STAT_CMD_RX 0x31
+#define STAT_INVALID 0x32
+#define STAT_GARBLED 0x33
+
+#define POLYGEN 0x07
 
 typedef void (*cmdCallback)(uint8_t cmd);
+
+typedef uint8_t (*checksumCallback)(uint8_t *data, uint8_t len);
 
 class coats
 {
   
 	public:
 	
-		coats(uint16_t ending, bool statusEnable);
+		coats(uint16_t ending, bool statusEnable, uint8_t checkSum);
 
     /*
      *  Setup functions
      */ 
      
-    void addTlm(uint8_t id, uint32_t* data);
+    void addTlm(uint8_t id, void *data, size_t dataSize);
 
     void addCmd(uint8_t id, cmdCallback callback);
      
@@ -64,17 +76,18 @@ class coats
       Serial_ *_sw;
     }SerialCOATS;
     
+
 		/* You can cut the memory space used in an 8-bit processor by defining "WORD_8BIT"*/
-		#ifdef WORD_8BIT
-		uint8_t 	*packetPointers[256];
-		#else
-		uint32_t 	*packetPointers[256];
-		#endif
-    cmdCallback   cmdCallbackPtr[256];
+
+		void 	*packetPointers[256];
+    cmdCallback       cmdCallbackPtr[256];
 		size_t 	packetSizes[256];
 		uint16_t endString;
-		bool timerEnable;
+		checksumCallback  csCallbackPtr;
     bool statEnable;
     
 
 };
+
+ uint8_t calcXOR(uint8_t *data, uint8_t len);
+ uint8_t calcCRC8(uint8_t *data, uint8_t len);

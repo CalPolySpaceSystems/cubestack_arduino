@@ -2,12 +2,26 @@
 
 #include "coats.h"
 
-coats::coats(uint16_t ending, bool statusEnable)
+coats::coats(uint16_t ending, bool statusEnable, uint8_t checkSum)
 {
 	endString = ending;
+  statEnable = statusEnable;
 
-  // Enable status Tlm
-  
+  switch (checkSum){
+
+    case XOR:
+      csCallbackPtr = &calcXOR;
+      break;
+
+    case CRC8:
+      csCallbackPtr = &calcCRC8;
+      break;
+      
+    default:
+      csCallbackPtr = 0;
+    
+  }
+ 
 }
 
 /*
@@ -31,8 +45,15 @@ void coats::serialInit(Serial_& serialInst, long baud)
 /* Send a telemetry packet */
 void coats::serialWriteTlm(HardwareSerial& serialInst, uint8_t id){
   
+  size_t sz = packetSizes[id];
+  uint8_t *pData = (uint8_t*)packetPointers[id];
+  uint8_t checkSum = 0;
+
   SerialCOATS._hw->write(id);
-  SerialCOATS._hw->write((byte *)packetPointers[id], packetSizes[id]);
+  SerialCOATS._hw->write(pData, sz);
+  
+  if (csCallbackPtr){ SerialCOATS._hw->write(csCallbackPtr(pData,sz));}
+
   SerialCOATS._hw->write(endString >> 8);
   SerialCOATS._hw->write(endString); 
   
@@ -40,34 +61,57 @@ void coats::serialWriteTlm(HardwareSerial& serialInst, uint8_t id){
 
 void coats::serialWriteTlm(Serial_& serialInst, uint8_t id){
   
-	SerialCOATS._sw->write(id);
-	SerialCOATS._sw->write((byte *)packetPointers[id], packetSizes[id]);
+  size_t sz = packetSizes[id];
+  uint8_t *pData = (uint8_t*)packetPointers[id];
+  uint8_t checkSum = 0;
+
+  SerialCOATS._sw->write(id);
+  SerialCOATS._sw->write(pData, sz);
+  
+  if (csCallbackPtr){ SerialCOATS._sw->write(csCallbackPtr(pData,sz));}
+
 	SerialCOATS._sw->write(endString >> 8);
   SerialCOATS._sw->write(endString); 
 
 }
 
 void coats::serialWriteTlm(HardwareSerial& serialInst, uint8_t id, uint32_t timeStamp){
+  
+  size_t sz = packetSizes[id];
+  uint8_t *pData = (uint8_t*)packetPointers[id];
+  uint8_t checkSum = 0;
 
   SerialCOATS._hw->write(id);
   SerialCOATS._hw->write(timeStamp);
   SerialCOATS._hw->write(timeStamp >> 8);
   SerialCOATS._hw->write(timeStamp >> 16);
   SerialCOATS._hw->write(timeStamp >> 24);
-  SerialCOATS._hw->write((byte *)packetPointers[id], packetSizes[id]);
+  SerialCOATS._hw->write(pData, sz);
+
+  if (csCallbackPtr){ SerialCOATS._hw->write(csCallbackPtr(pData,sz));}
+
   SerialCOATS._hw->write(endString >> 8);
   SerialCOATS._hw->write(endString); 
 
 }
 
 void coats::serialWriteTlm(Serial_& serialInst, uint8_t id, uint32_t timeStamp){
-
+  
+  size_t sz = packetSizes[id];
+  uint8_t *pData = (uint8_t*)packetPointers[id];
+  uint8_t checkSum = 0;
+  
   SerialCOATS._sw->write(id);
   SerialCOATS._sw->write(timeStamp);
   SerialCOATS._sw->write(timeStamp >> 8);
   SerialCOATS._sw->write(timeStamp >> 16);
   SerialCOATS._sw->write(timeStamp >> 24);
-  SerialCOATS._sw->write((byte *)packetPointers[id], packetSizes[id]);
+  SerialCOATS._hw->write(pData, sz);
+
+  if (csCallbackPtr){ 
+    SerialCOATS._sw->write(csCallbackPtr(pData,sz));
+}
+
   SerialCOATS._sw->write(endString >> 8);
   SerialCOATS._sw->write(endString); 
 
@@ -96,7 +140,7 @@ void coats::serialWriteStat(Serial_& serialInst, uint8_t statMsg){
 /* Reads a command from the serial port given
  * 
  * FORMAT: 
- * | Start | CMD | CMD Value | Checksum | 
+ * | CMD | CMD Value | Checksum | 
  */
 
 void coats::serialParseCmd(HardwareSerial& serialInst){
@@ -104,25 +148,33 @@ void coats::serialParseCmd(HardwareSerial& serialInst){
   // Check for input
   if (SerialCOATS._hw->available()){
     
-    uint8_t input[4];
+    uint8_t input[3];
 
     // Read from buffer
-    SerialCOATS._hw->readBytes(input,5);
+    SerialCOATS._hw->readBytes(input,3);
 
+    // Flush everything else from the buffer.
+    while (SerialCOATS._hw->available()){
+      char c = SerialCOATS._hw->read();
+    }
+
+    // Read command checksum (CRC8)
+    uint8_t cs_calc = calcCRC8((uint8_t*)input,2);
     
-    // Read command checksum (XOR)
-    uint8_t cs_calc = input[1]^input[2];
+    if(input[2]==cs_calc){
 
-    if(input[3]==cs_calc){
+      // Send status
+      this->serialWriteStat(serialInst, STAT_CMD_RX);
 
       // Send parameter to callback function
-      cmdCallbackPtr[input[1]](input[2]);
+      cmdCallbackPtr[input[0]](input[2]);
         
     }
 
     else{
 
       // Inform of packet garbled
+      this->serialWriteStat(serialInst, STAT_GARBLED);
         
     }
       
@@ -135,38 +187,47 @@ void coats::serialParseCmd(Serial_& serialInst){
   // Check for input
   if (SerialCOATS._sw->available()){
     
-    char input[4];
+    char input[3];
 
     // Read from buffer
-    SerialCOATS._sw->readBytes(input,4);
-
+    SerialCOATS._sw->readBytes(input,3);
     
-    // Read command checksum (XOR)
-    uint8_t cs_calc = input[1]^input[2];
+    // Flush everything else from the buffer.
+    while (SerialCOATS._sw->available()){
+      char c = SerialCOATS._sw->read();
+    }
 
-    if(input[3]==cs_calc){
+    // Read command checksum (CRC8)
+    uint8_t cs_calc = calcCRC8((uint8_t*)input,2);
 
+    if(input[2]==cs_calc){
+      
+      // Send status
+      this->serialWriteStat(serialInst, STAT_CMD_RX);
+
+      cmdCallback cb = cmdCallbackPtr[input[0]];
+      
       // Send parameter to callback function
-      cmdCallbackPtr[input[1]](input[2]);
+      cb(input[1]);
         
     }
 
     else{
 
       // Inform of packet garbled
-        
+      this->serialWriteStat(serialInst, STAT_GARBLED);
+       
     }
       
   }
 
 }
   
-
 /* Adds a new telemetry packet */ 
-void coats::addTlm(uint8_t id, uint32_t * data){
+void coats::addTlm(uint8_t id, void *data, size_t dataSize){
 	
-	packetSizes[id] = sizeof(*data);
-  //SerialUSB.println(packetSizes[id]);
+	packetSizes[id] = dataSize;
+  SerialUSB.println(packetSizes[id]);
 	packetPointers[id] = data;
 
 }
@@ -184,7 +245,7 @@ void coats::buildTlm(uint8_t id, String packet){
 	packet[0] = id;
 	for (int i=0;i<dataSize;i++)
 	{
-		packet[i+1] = *(packetPointers[id] + 8*i);
+		packet[i+1] = *(char*)(packetPointers[id] + 8*i);
 	}
 	packet[dataSize+1] = (endString >> 8);
 	packet[dataSize+2] = (endString); 
@@ -201,12 +262,53 @@ void coats::buildTlm(uint8_t id, String packet, uint32_t timeStamp){
   packet[4] = (timeStamp >> 24);
   for (int i=0;i<dataSize;i++)
   {
-    packet[i+5] = *(packetPointers[id] + 8*i);
+    packet[i+5] = *(char*)(packetPointers[id] + 8*i);
   }
 
   packet[dataSize+5] = (endString >> 8);
   packet[dataSize+6] = (endString);
 
 
+
+}
+
+/* Checksum Calculations */
+
+uint8_t calcXOR(uint8_t *data, uint8_t len){
+
+  uint8_t cs = 0;
+  
+  for (uint8_t i=0;i<len;i++){
+
+        cs ^= *(data+i);
+
+  }
+
+  return cs;
+  
+}
+
+uint8_t calcCRC8(uint8_t *data, uint8_t len){
+  
+    uint8_t crc = 0x00;
+    
+    while (len--) {
+      
+      uint8_t extract = *data++;
+      
+      for (uint8_t tempI = 8; tempI; tempI--) {
+        uint8_t sum = (crc ^ extract) & 0x01;
+        
+        crc >>= 1;
+        
+        if (sum) {
+          crc ^= 0x8C;
+        }
+        
+        extract >>= 1;
+      }
+    }
+    
+    return crc;
 
 }
