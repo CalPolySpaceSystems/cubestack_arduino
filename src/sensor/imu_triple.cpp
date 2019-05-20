@@ -20,11 +20,11 @@ imu_triple::imu_triple(int cs_fine, int cs_coarse, int cs_hi_g){
 /* Access internal addresses */
 void imu_triple::init(){
   
-  /* Init fine sensor */
+  /* Init fine sensor (2 g, 250 dps)*/
   this->set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x70);
   this->set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x70);
 
-  /* Init coarse sensor */
+  /* Init coarse sensor (16 g, 2000 dps) */
   this->set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x74);
   this->set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x7C);
 
