@@ -1,4 +1,4 @@
-#include "barometer_MS56xx.h"
+#include "ms56xx.h"
 #include <Wire.h> //need to learn about this library
 #include <math.h>
 
@@ -91,7 +91,7 @@ uint32_t readRawMS56xx(void) {
   //MS56xx primed for temperature
   //10ms delay after priming
 
-void readTempMS56xx(struct MS56xx_packet *data) {
+void readTempMS56xx(baro *data) {
   uint32_t D2;
   int32_t T;
   int32_t dT;
@@ -112,7 +112,7 @@ void readTempMS56xx(struct MS56xx_packet *data) {
   //MS56xx is primed for pressure
   //10ms delay after priming
 
-void readPressureMS56xx(struct MS56xx_packet *data) {
+void readPressureMS56xx(baro *data) {
   int64_t OFF;
   int64_t SENS;
   uint32_t D1 = readRawMS56xx(); 
@@ -139,12 +139,12 @@ void readPressureMS56xx(struct MS56xx_packet *data) {
 }
 
 //Calculate altitude using data from MS56xxdata struct
-void calcAltitudeMS56xx(MS56xx_packet *data) {
+void calcAltitudeMS56xx(baro *data) {
   data->altitude = ((pow((1013.25 / data->pressure), 1/5.275) - 1.0) * (data->temp + 273.15))/0.0065;
 }
 
 //Convert MS56xx struct data to string for output
-String MS56xxToString(struct MS56xx_packet *data) { 
+String MS56xxToString(baro *data) { 
 //changed all BAROMETER_packets to MS56xx_packets as defined in the header file
   String out = "Pressure = " + String(data->pressure);
   out += "\nTemperature = " + String(data->temp); //changed this to temp instead of temperature

@@ -7,30 +7,36 @@
 //Note: all data reads must be primed and allow for a 10ms delay
 //after priming before reading.
 
-struct MS56xx_packet { //This will be the data in the correct packet
-  //"format" for COSMOS
-  float temp;
-  float pressure;
-  float altitude;
-}__attribute__((packed));
+
+typedef union {
+
+    struct {
+        float pressure;
+        float temp;
+        float altitude;
+    }__attribute__((packed));
+
+    float a[3];
+
+} baro;
 
 void initMS56xx(String); 
 
 //Temperature functions must all primeTemp before readTemp
 void primeTempMS56xx(void); 
-void readTempMS56xx(struct MS56xx_packet *data); 
+void readTempMS56xx(baro *data); 
 
 
 //Pressure functions must call primePressure befrore readPressure
 void primePressureMS56xx(void);
-void readPressureMS56xx(struct MS56xx_packet *data);
+void readPressureMS56xx(baro *data);
 
 //Calculate altitude using data from MS5611_packet struct
-void calcAltitudeMS56xx(struct MS56xx_packet *data);
+void calcAltitudeMS56xx(baro *data);
 //calcAlt..(&variable)
 
 //convert MS5611 struct data to string for output
-String MS56xxToString(struct MS56xx_packet *data);
+String MS56xxToString(baro *data);
 
 /*The function below reads the raw values based on the previous 
  * priming method (Temp or Pressure)
