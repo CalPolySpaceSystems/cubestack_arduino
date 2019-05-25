@@ -110,7 +110,7 @@ void coats::serialWriteTlm(Serial_& serialInst, uint8_t id, uint32_t timeStamp){
 
   if (csCallbackPtr){ 
     SerialCOATS._sw->write(csCallbackPtr(pData,sz));
-}
+  }
 
   SerialCOATS._sw->write(endString >> 8);
   SerialCOATS._sw->write(endString); 
@@ -167,8 +167,11 @@ void coats::serialParseCmd(HardwareSerial& serialInst){
       this->serialWriteStat(serialInst, STAT_CMD_RX);
 
       // Send parameter to callback function
-      cmdCallbackPtr[input[0]](input[2]);
-        
+      cmdCallback cb = cmdCallbackPtr[input[0]];
+
+      // Send parameter to callback function
+      cb(input[1]);
+      
     }
 
     else{
@@ -239,36 +242,57 @@ void coats::addCmd(uint8_t id, cmdCallback callback){
 
 
 /* Outputs a packet as a string */
-void coats::buildTlm(uint8_t id, String packet){
-	size_t dataSize = packetSizes[id];
+uint8_t coats::buildTlm(uint8_t id, uint8_t packet[]){
 
-	packet[0] = id;
-	for (int i=0;i<dataSize;i++)
-	{
-		packet[i+1] = *(char*)(packetPointers[id] + 8*i);
-	}
-	packet[dataSize+1] = (endString >> 8);
-	packet[dataSize+2] = (endString); 
+  size_t sz = packetSizes[id];
+  uint8_t *pData = (uint8_t*)packetPointers[id];
+  uint8_t checkSum = 0;
+
+  packet[0] = id;
+
+  for (uint8_t i=0;i<sz;i++)
+  {
+    packet[i+1] = *(pData+i);
+  }
+
+  if (csCallbackPtr){ 
+    packet[sz+1] = csCallbackPtr(pData,sz);
+    sz+=1;
+  }
+
+  packet[sz+1] = (endString >> 8);
+  packet[sz+2] = (endString);
+
+  return sz;
 
 }
 
-void coats::buildTlm(uint8_t id, String packet, uint32_t timeStamp){
-  size_t dataSize = packetSizes[id];
-  
+uint8_t coats::buildTlm(uint8_t id, uint8_t packet[], uint32_t timeStamp){
+
+  size_t sz = packetSizes[id];
+  uint8_t *pData = (uint8_t*)packetPointers[id];
+  uint8_t checkSum = 0;
+
   packet[0] = id;
   packet[1] = timeStamp;
   packet[2] = (timeStamp >> 8);
   packet[3] = (timeStamp >> 16);
   packet[4] = (timeStamp >> 24);
-  for (int i=0;i<dataSize;i++)
+
+  for (uint8_t i=0;i<sz;i++)
   {
-    packet[i+5] = *(char*)(packetPointers[id] + 8*i);
+    packet[i+5] = *(pData+i);
   }
 
-  packet[dataSize+5] = (endString >> 8);
-  packet[dataSize+6] = (endString);
+  if (csCallbackPtr){ 
+    packet[sz+5] = csCallbackPtr(pData,sz);
+    sz+=1;
+  }
 
+  packet[sz+5] = (endString >> 8);
+  packet[sz+6] = (endString);
 
+  return sz;
 
 }
 

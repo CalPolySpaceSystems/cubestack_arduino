@@ -21,12 +21,12 @@ imu_triple::imu_triple(int cs_fine, int cs_coarse, int cs_hi_g){
 void imu_triple::init(){
   
   /* Init fine sensor (2 g, 250 dps)*/
-  this->set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x70);
-  this->set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x70);
+  this->set(LSM6DSL_FINE,LSM6DSL_CTRL1_XL,0x60);
+  this->set(LSM6DSL_FINE,LSM6DSL_CTRL2_G,0x60);
 
   /* Init coarse sensor (16 g, 2000 dps) */
-  this->set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x74);
-  this->set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x7C);
+  this->set(LSM6DSL_COARSE,LSM6DSL_CTRL1_XL,0x64);
+  this->set(LSM6DSL_COARSE,LSM6DSL_CTRL2_G,0x6C);
 
   /* Init hi-g sensor */
   this->set(H3LIS331DL,H3LIS331DL_CTRL1,0x3F);
