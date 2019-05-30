@@ -40,9 +40,9 @@ class coats
 
     void addCmd(uint8_t id, cmdCallback callback);
      
-    uint8_t buildTlm(uint8_t id, uint8_t packet[]);
+    uint8_t buildTlm(uint8_t id, uint8_t *packet);
 
-    uint8_t buildTlm(uint8_t id, uint8_t packet[], uint32_t timeStamp);
+    uint8_t buildTlm(uint8_t id, uint8_t *packet, uint32_t timeStamp);
   
     /*
      *  UART Interface

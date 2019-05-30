@@ -230,7 +230,6 @@ void coats::serialParseCmd(Serial_& serialInst){
 void coats::addTlm(uint8_t id, void *data, size_t dataSize){
 	
 	packetSizes[id] = dataSize;
-  SerialUSB.println(packetSizes[id]);
 	packetPointers[id] = data;
 
 }
@@ -242,7 +241,7 @@ void coats::addCmd(uint8_t id, cmdCallback callback){
 
 
 /* Outputs a packet as a string */
-uint8_t coats::buildTlm(uint8_t id, uint8_t packet[]){
+uint8_t coats::buildTlm(uint8_t id, uint8_t *packet){
 
   size_t sz = packetSizes[id];
   uint8_t *pData = (uint8_t*)packetPointers[id];
@@ -263,11 +262,11 @@ uint8_t coats::buildTlm(uint8_t id, uint8_t packet[]){
   packet[sz+1] = (endString >> 8);
   packet[sz+2] = (endString);
 
-  return sz;
+  return (sz+3);
 
 }
 
-uint8_t coats::buildTlm(uint8_t id, uint8_t packet[], uint32_t timeStamp){
+uint8_t coats::buildTlm(uint8_t id, uint8_t *packet, uint32_t timeStamp){
 
   size_t sz = packetSizes[id];
   uint8_t *pData = (uint8_t*)packetPointers[id];
@@ -292,7 +291,7 @@ uint8_t coats::buildTlm(uint8_t id, uint8_t packet[], uint32_t timeStamp){
   packet[sz+5] = (endString >> 8);
   packet[sz+6] = (endString);
 
-  return sz;
+  return (sz+7);
 
 }
 
