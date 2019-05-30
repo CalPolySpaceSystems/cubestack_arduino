@@ -13,7 +13,7 @@
 //#define MODE_DEBUG
 #define MODE_COATS
 #define MODE_FLASH
-//#define MODE_STATE
+#define MODE_STATE
 
 /* Define task scheduler resolution */
 #define _TASK_MICRO_RES
@@ -90,6 +90,8 @@ Scheduler runner;
 #define STAT_GROUND     0x10
 #define STAT_LAUNCH     0x11
 
+#define STAT_ERASED     0x41
+
 coats downlink = coats(END,STATUS_ENABLE,CRC8);
 
 #endif
@@ -101,6 +103,16 @@ uint32_t nextAddress = 0;
 bool flashWrite = false;
 
 #endif
+
+#define IMU_FAST        2403
+#define IMU_SLOW        4806
+#define MAG_FAST        10000
+#define MAG_SLOW        40000
+#define BARO_GPS_FAST   50000
+#define BARO_GPS_SLOW   100000
+#define TAP_FAST        5000
+#define TAP_SLOW        10000
+#define STATE_INTERVAL  19224
 
 /* Sensor Class Initializations */
 imu_triple      imu = imu_triple(CS_IMU_FINE,CS_IMU_COARSE,CS_IMU_HI_G);
@@ -140,14 +152,12 @@ typedef struct {
   int16_t mag[3];
 } calib;
 
-
-
 /* State Variable */
 #ifdef MODE_STATE
-float q[4] = {1.0, 0.0, 0.0, 0.0};
+float q[4] = {1.00, 0.00, 0.00, 0.00};
 #endif
 
-//float rpy[3] = {0.0, 0.0, 0.0};
+float rpy[3] = {0.0, 0.0, 0.0};
 
 /* Internal calibration storage */
 #ifdef ARDUINO_SAMD_ZERO
@@ -192,34 +202,26 @@ void setMode(uint8_t param);
 void eraseFlash(uint8_t param);
 
 #endif
-//pollImu.setInterval(1200);
-//pollMag.setInterval(10000);
-//pollBaro.setInterval(10000);
-//pollGPS.setInterval(100000);
-//tlmImu.setInterval(2400);
-//tlmBaro.setInterval(40000);
-//tlmMag.setInterval(40000);
-//tlmGPS.setInterval(100000);
 
 /* Polling Task Definitions */
-Task pollImu(2403, TASK_FOREVER, &imuPoll);
-Task pollMag(10000, TASK_FOREVER, &magPoll);
-Task pollBaro(50000, TASK_FOREVER, &baroPrimeTemp);
+Task pollImu(IMU_SLOW, TASK_FOREVER, &imuPoll);
+Task pollMag(MAG_SLOW, TASK_FOREVER, &magPoll);
+Task pollBaro(BARO_GPS_SLOW, TASK_FOREVER, &baroPrimeTemp);
 //Task pollTap(#,#,#);
-Task pollGPS(100000, TASK_FOREVER, &gpsPoll);
+Task pollGPS(BARO_GPS_SLOW, TASK_FOREVER, &gpsPoll);
 
 /* Telemetry Task Definitions */
 #ifdef MODE_COATS
-Task tlmImu(2403, TASK_FOREVER, &imuDownlink);
-Task tlmBaro(50000, TASK_FOREVER, &baroDownlink);
-Task tlmMag(10000, TASK_FOREVER, &magDownlink);
-Task tlmGPS(100000, TASK_FOREVER, &gpsDownlink);
+Task tlmImu(IMU_SLOW, TASK_FOREVER, &imuDownlink);
+Task tlmBaro(BARO_GPS_SLOW, TASK_FOREVER, &baroDownlink);
+Task tlmMag(MAG_SLOW, TASK_FOREVER, &magDownlink);
+Task tlmGPS(BARO_GPS_SLOW, TASK_FOREVER, &gpsDownlink);
 Task cmdRx(100000, TASK_FOREVER, &cmdUplink);
 #endif
 
 /* Other Task Definitions */
 #ifdef MODE_STATE
-Task margEst(1200, TASK_FOREVER, &margCallback);
+Task margEst(STATE_INTERVAL, TASK_FOREVER, &margCallback);
 #endif
 /*____________________Setup___________________*/
 void setup () {
@@ -241,6 +243,9 @@ void setup () {
   
   pinMode(IO_LS,OUTPUT);
   digitalWrite(IO_LS,LOW);
+
+  //pinMode(CS_FLASH,OUTPUT);
+  //digital
   
   //digitalWrite(IO_LS,HIGH);
   /* Open all communication ports */
@@ -256,7 +261,7 @@ void setup () {
   /* Intialize GPS */
   gps.begin();
   gps.setI2COutput(COM_TYPE_UBX);
-  gps.setNavigationFrequency(100);
+  gps.setNavigationFrequency(10);
   gps.setAutoPVT(true);
   gps.saveConfiguration();
 
@@ -268,8 +273,11 @@ void setup () {
 
   // Check for data in flash
   for (uint8_t i=0;i<16;i++){
-    if (flash.readByte(i) ^ 0xFF){
+    char b = flash.readByte(i);
+    if ((uint8_t)b != 0xFF){
 
+      beep(IO_LS,440,1000);
+      
       // Do not allow flash to be unlocked
       unlockFlash = 0;
 
@@ -281,10 +289,17 @@ void setup () {
   }
   
   if (unlockFlash){
-    digitalWrite(CS_FLASH,LOW);
-    SPI.transfer(0x98);
-    digitalWrite(CS_FLASH,HIGH);
+    
+  digitalWrite(CS_FLASH,LOW);
+  SPI.transfer(0x06);
+  digitalWrite(CS_FLASH,HIGH);
 
+  delay(100);
+
+  digitalWrite(CS_FLASH,LOW);
+  SPI.transfer(0x98);
+  digitalWrite(CS_FLASH,HIGH);
+  
   }
     
   #endif
@@ -302,7 +317,7 @@ void setup () {
 
       #ifdef MODE_FLASH
       
-      //flashOffload();
+      flashOffload();
 
       #endif
       bool isCalibrated = false;
@@ -361,7 +376,10 @@ void setup () {
   
   /* Connect to the radio */
   downlink.serialInit(SerialDownlink,230400);
-
+  
+  // Print startup status
+  downlink.serialWriteStat(SerialDownlink,statusStartup); 
+  
   #endif
 
   /* Initialize Tasks and Scheduler */
@@ -371,7 +389,7 @@ void setup () {
   runner.addTask(pollMag);
   runner.addTask(pollBaro);
   //runner.addTask(pollTap);
-  //runner.addTask(pollGPS);
+  runner.addTask(pollGPS);
 
   #ifdef MODE_STATE
   runner.addTask(margEst);
@@ -391,7 +409,7 @@ void setup () {
   pollMag.enable();
   pollBaro.enable();
   //pollTap.enable();
-  //pollGPS.enable();
+  pollGPS.enable();
 
   #ifdef MODE_STATE
   margEst.enable();
@@ -405,8 +423,7 @@ void setup () {
   //tlmTap.enable();
   cmdRx.enable();
 
-  // Print startup status
-  
+
   
   #endif  
 
@@ -449,13 +466,15 @@ void imuPoll() {
   #endif
 
   #ifdef MODE_FLASH
-  uint8_t buf[32];
-  uint8_t sz;
 
-  sz = downlink.buildTlm(IMU_ID,buf,imu_micros)+8;
-  flash.writeByteArray(nextAddress,buf,sz,false);
-  nextAddress+=(sz);
-    
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
+
+    sz = downlink.buildTlm(IMU_RAW_ID,buf,imu_micros);
+    flash.writeByteArray(nextAddress,buf,sz,false);
+    nextAddress+=(sz);
+  }
   #endif
   
 }
@@ -480,13 +499,16 @@ void magPoll() {
   #endif
 
   #ifdef MODE_FLASH
-  uint8_t buf[32];
-  uint8_t sz;
-
-  sz = downlink.buildTlm(MAG_ID,buf,imu_micros)+8;
-  flash.writeByteArray(nextAddress,buf,sz,false);
-  nextAddress+=(sz);
-    
+  
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
+  
+    sz = downlink.buildTlm(MAG_RAW_ID,buf,imu_micros);
+    flash.writeByteArray(nextAddress,buf,sz,false);
+    nextAddress+=(sz);
+ }
+ 
   #endif
   
 }
@@ -529,12 +551,14 @@ void baroPollPress() {
   #endif
   
   #ifdef MODE_FLASH
-  uint8_t buf[32];
-  uint8_t sz;
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
 
-  sz = downlink.buildTlm(BARO_ID,buf,imu_micros)+8;
-  flash.writeByteArray(nextAddress,buf,sz,false);
-  nextAddress+=(sz);   
+    sz = downlink.buildTlm(BARO_ID,buf,imu_micros);
+    flash.writeByteArray(nextAddress,buf,sz,false);
+    nextAddress+=(sz);
+  }   
   #endif
   
   
@@ -564,16 +588,59 @@ void gpsPoll(){
   #endif
 
   #ifdef MODE_FLASH
-  uint8_t buf[32];
-  uint8_t sz;
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
 
-  sz = downlink.buildTlm(GPS_ID,buf,imu_micros)+8;
-  flash.writeByteArray(nextAddress,buf,sz,false);
-  nextAddress+=(sz);
-    
+    sz = downlink.buildTlm(GPS_ID,buf,imu_micros);
+    flash.writeByteArray(nextAddress,buf,sz,false);
+    nextAddress+=(sz);
+  }
+  
   #endif
   
 }
+/*
+void ptapCallback1() {
+  raw_data_packet[0] = readRaw_ads1115(ADC_A_ADDR);
+  prime_ads1115(ADC_A_ADDR, 1); //A at ch1
+
+  raw_data_packet[1] = readRaw_ads1115(ADC_B_ADDR);
+  prime_ads1115(ADC_B_ADDR, 1); //B at ch1
+
+  pollPtap.setCallback(&ptapCallback3);
+  pollPtap.delay(1000);
+}
+
+void ptapCallback2() {
+  raw_data_packet[2] = readRaw_ads1115(ADC_A_ADDR);
+  prime_ads1115(ADC_A_ADDR, 2); //A at ch2
+
+  raw_data_packet[3] = readRaw_ads1115(ADC_B_ADDR);
+  prime_ads1115(ADC_B_ADDR, 2); //B at ch2
+
+  
+  for(int i=0; i<=5; i++) {
+    SerialUSB.println(raw_data_packet[i]);
+  }
+
+  pollPtap.setCallback(&ptapCallback1);
+
+}
+
+void ptapCallback3() {
+  ptap_micros = micros();
+
+  raw_data_packet[4] = readRaw_ads1115(ADC_A_ADDR);
+  prime_ads1115(ADC_A_ADDR, 0); //A at ch0
+
+  raw_data_packet[5] = readRaw_ads1115(ADC_B_ADDR);
+  prime_ads1115(ADC_B_ADDR, 0); //B at ch0
+
+  pollPtap.setCallback(&ptapCallback2);
+  pollPtap.delay(1000); //calculated to be 983 microseconds, round to 1000
+}
+*/
 
 /*______________Telemetry Callbacks______________________*/
 
@@ -588,6 +655,7 @@ void imuDownlink() {
 void magDownlink() {
 
   downlink.serialWriteTlm(SerialDownlink,MAG_RAW_ID,mag_micros);
+  
     
 }
 
@@ -616,8 +684,6 @@ void cmdUplink(){
 }
 
 #endif
-/*_______________Flash Recording Callbacks_______________*/
-
 
 /*_______________State Estimation Callbacks______________*/
 
@@ -635,8 +701,8 @@ void margCallback() {
   #ifdef MODE_DEBUG
   
   // Print all data
-  SerialUSB.print(est_micros);
-  SerialUSB.print(',');
+  //SerialUSB.print(est_micros);
+  //SerialUSB.print(',');
   SerialUSB.print(rpy[0]);
   SerialUSB.print(',');
   SerialUSB.print(rpy[1]);
@@ -644,14 +710,15 @@ void margCallback() {
   SerialUSB.println(rpy[2]);
   #endif
 
-  #ifdef MODE_FLASH
-  uint8_t buf[32];
-  uint8_t sz;
+  #ifdef MODE_FASH
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
 
-  sz = downlink.buildTlm(STATE_ID,buf,imu_micros)+8;
-  flash.writeByteArray(nextAddress,buf,sz,false);
-  nextAddress+=(sz);
-    
+    sz = downlink.buildTlm(STATE_ID,&buf,imu_micros)+8;
+    flash.writeByteArray(nextAddress,&buf,sz,false);
+    nextAddress+=(sz);
+  }
   #endif
   
 }
@@ -668,17 +735,17 @@ void setMode(uint8_t param){
     // Ground
     case 0x10:
 
-      pollImu.setInterval(9600);
-      pollMag.setInterval(100000);
-      pollBaro.setInterval(100000);
-      pollGPS.setInterval(100000);
+      pollImu.setInterval(IMU_SLOW);
+      pollMag.setInterval(MAG_SLOW);
+      pollBaro.setInterval(BARO_GPS_SLOW);
+      pollGPS.setInterval(BARO_GPS_SLOW);
       //pollTap
 
       #ifdef MODE_COATS
-      tlmImu.setInterval(9600);
-      tlmBaro.setInterval(100000);
-      tlmMag.setInterval(100000);
-      tlmGPS.setInterval(100000);
+      tlmImu.setInterval(IMU_SLOW);
+      tlmBaro.setInterval(BARO_GPS_SLOW);
+      tlmMag.setInterval(MAG_SLOW);
+      tlmGPS.setInterval(BARO_GPS_SLOW);
       //tlmTap
       
       // Send status
@@ -696,17 +763,17 @@ void setMode(uint8_t param){
     // Launch
     case 0x11:
       
-      pollImu.setInterval(1200);
-      pollMag.setInterval(10000);
-      pollBaro.setInterval(10000);
-      pollGPS.setInterval(100000);
+      pollImu.setInterval(IMU_FAST);
+      pollMag.setInterval(MAG_FAST);
+      pollBaro.setInterval(BARO_GPS_FAST);
+      pollGPS.setInterval(BARO_GPS_FAST);
       //pollTap
 
       #ifdef MODE_COATS
-      tlmImu.setInterval(2400);
-      tlmBaro.setInterval(40000);
-      tlmMag.setInterval(40000);
-      tlmGPS.setInterval(100000);
+      tlmImu.setInterval(IMU_FAST);
+      tlmBaro.setInterval(BARO_GPS_FAST);
+      tlmMag.setInterval(MAG_FAST*2);
+      tlmGPS.setInterval(BARO_GPS_FAST);
 
       // Send status
       downlink.serialWriteStat(SerialDownlink,STAT_LAUNCH);
@@ -732,13 +799,23 @@ void setMode(uint8_t param){
 
 void eraseFlash(uint8_t param){
 
-  if (param == 0x42){
+  if (param == 0x21){
 
   #ifdef MODE_FLASH
+    
+    digitalWrite(CS_FLASH,LOW);
+    SPI.transfer(0x06);
+    digitalWrite(CS_FLASH,HIGH);
 
+    digitalWrite(CS_FLASH,LOW);
+    SPI.transfer(0x98);
+    digitalWrite(CS_FLASH,HIGH);
+    
     flash.eraseChip();
 
   #endif
+
+  downlink.serialWriteStat(SerialDownlink,STAT_ERASED);
     
   }
   
@@ -755,21 +832,46 @@ void flashOffload(){
   while(1){
     while(!SerialUSB.available()){} 
 
-    if (SerialUSB.read() == 'y'){
+    char in = SerialUSB.read();
 
-      for (uint8_t i=0;i<1000000;i++){
+    //SerialUSB.println(in);
+
+    if (in == 'y'){
+
+      SerialUSB.println("Offloading Flash...");
+
+      SerialDownlink.begin(230400);
+
+      uint8_t emptyCount = 0;
+
+      for (uint32_t i=0;i<8000000;i++){
 
         char c = flash.readChar(i);
         SerialDownlink.write(c);
-        delayMicroseconds(50);
+        if (c==0xFF){
+          emptyCount++;
+        }
+        else{
+          emptyCount = 0;
+        }
+
+        if (emptyCount>64){
+          break;
+        }
+        
+        delayMicroseconds(100);
         
       }
+
+      SerialUSB.println("Offload Complete.");
+
+      playInternationale();
       
       while(1){;}
       
     }
 
-    else if (SerialUSB.read() == 'n'){
+    else if (in == 'n'){
       
       break;
     }
@@ -790,7 +892,7 @@ void flashOffload(){
 
 void calibrate(bool hasCalibration){
   
-  if (hasCalibration){
+  if (!hasCalibration){
     SerialUSB.println("Unit is not calibrated. Press any key to begin calibration."); 
   }
   else{
@@ -861,6 +963,12 @@ void calibrate(bool hasCalibration){
 
   SerialUSB.println("Calibration values stored. Please restart the device");
 
+  while(SerialUSB.available())
+  {
+    char c = SerialUSB.read();
+  } 
+  while(!SerialUSB.available()){}
+  
   // Wait forever
   playInternationale();
 
@@ -869,6 +977,7 @@ void calibrate(bool hasCalibration){
 }
 
 #define REST  0
+#define A4    440
 #define B4    494
 #define C4    523    
 #define C4S   554
@@ -888,18 +997,36 @@ void calibrate(bool hasCalibration){
 
 void playInternationale(){
 
-  int notes[34] = {D4,G4,F4S,A5,G4,D4,B4,E4,C4,E4,A5,G4,F4S,E4,D4,C4,B4,REST,D4,G4,F4S,A5,G4,D4,B4,E4,C4,A5,G4,F4S,A5,C5,F4S,G4};
-  int times[34] = {E,QD,E,E,E,E,E,H,QD,E,QD,E,E,E,E,E,H,Q,Q,QD,E,E,E,E,E,H,Q,E,E,Q,Q,Q,Q,H};
+  int notes1[35] = {D4,G4,F4S,A5,G4,D4,B4,E4,C4,E4,A5,G4,F4S,E4,D4,C4,B4,REST,D4,G4,F4S,A5,G4,D4,B4,E4,C4,A5,G4,F4S,A5,C5,F4S,G4,REST};
+  int times1[35] = {E,QD,E,E,E,E,E,H,QD,E,QD,E,E,E,E,E,H,Q,Q,QD,E,E,E,E,E,H,Q,E,E,Q,Q,Q,Q,H,Q};
 
-  for (int i=0;i<34;i++){
-    if (notes[i]){
-      beep(IO_LS,notes[i],times[i]);
+  int notes2[35] = {A5,G4,F4S,E4,F4S,G4,E4,F4S,D4,C4S,D4,E4,A4,A5,G4,F4S,REST,REST,A5,A5,F4S,D4,D4,C4S,D4,B5,G4,G4,F4S,E4,F4S,A5,G4,E4,D4};
+  int times2[35] = {E,E,H,E,E,E,E,H,Q,E,E,QD,E,QD,E,H,Q,E,E,QD,E,E,E,E,E,H,E,E,E,E,Q,Q,Q,Q,Q};
+
+  int notes3[35] = {REST,B5,G4};
+  int times3[35] = {H,E,E,H,QD,E,H,Q,E,E,H,QD,E,H,Q, Q,H,QD,E,H,QD,E,QD,E,Q,Q,H,Q};
+
+
+  // 1st part
+  for (int i=0;i<35;i++){
+    if (notes1[i]){
+      beep(IO_LS,notes1[i],times1[i]);
     }
     else{
-      delay(times[i]);
+      delay(times1[i]);
     }
     
   }
 
-  
+  // Second part
+  for (int i=0;i<35;i++){
+    if (notes2[i]){
+      beep(IO_LS,notes2[i],times2[i]);
+    }
+    else{
+      delay(times2[i]);
+    }
+    
+  }
+
 }
