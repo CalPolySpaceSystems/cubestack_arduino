@@ -18,7 +18,6 @@
 /* Define task scheduler resolution */
 #define _TASK_MICRO_RES
 
-
 /* External Libraries */
 #include <TaskScheduler.h>
 #include <SPI.h>
@@ -37,6 +36,7 @@
 
 /* Other libraries */
 #include "src/util/io_utils.h"
+#include "src/util/dvrvtx.h"
 #include "src/state estimation/madgwick_marg.h"
 
 /* COATS */
@@ -49,6 +49,7 @@
 #define CS_FLASH          5             // SPI Chip Select for the SST26VF064B Flash Memory Chip
 #define HOLD_FLASH        4             // Digital Pin for the SST26VF064B Flash Memory HOLD Pin 
 #define CS_SD             4             // SPI Chip Select for the SD Card Slot
+#define IO_REC            6
 
 #define IO_LS             13            // Digital Pin for the loudspeaker
 //#define IO_LED            LED_BUILTIN   // Digital Pin for the LED
@@ -77,9 +78,7 @@ Scheduler runner;
 #define MAG_RAW_ID      136
 #define ALT_ID          137
 #define BARO_ID         138
-#define BARO_RAW_ID     139
-#define BARO_PROM_ID    140
-#define STATE_ID        141
+#define STATE_ID        143
 
 #define END             0x4350
 
@@ -119,6 +118,8 @@ imu_triple      imu = imu_triple(CS_IMU_FINE,CS_IMU_COARSE,CS_IMU_HI_G);
 lis2mdl         mag = lis2mdl();
 SFE_UBLOX_GPS   gps;
 
+dvrvtx          vtx = dvrvtx(Serial2,IO_REC);
+
 /* Sensor Data Structures */
 imu_raw     i_raw;
 imu_float   i_flt;
@@ -144,6 +145,7 @@ baro        b_data;
 
 uint16_t p_data[6];
 
+
 /* Calibration storage structures */
 typedef struct {        
   int16_t imu_fine[6];
@@ -154,10 +156,10 @@ typedef struct {
 
 /* State Variable */
 #ifdef MODE_STATE
-float q[4] = {1.00, 0.00, 0.00, 0.00};
+static float q[4] = {1.00, 0.00, 0.00, 0.00};
 #endif
 
-float rpy[3] = {0.0, 0.0, 0.0};
+//float rpy[3] = {0.0, 0.0, 0.0};
 
 /* Internal calibration storage */
 #ifdef ARDUINO_SAMD_ZERO
@@ -173,6 +175,7 @@ uint32_t mag_micros;
 uint32_t baro_micros;
 //uint32_t tap_micros
 uint32_t gps_micros;
+uint32_t state_micros;
 
 /* Prototype callback methods for Task Scheduler */
 void imuPoll();
@@ -196,12 +199,16 @@ void gpsDownlink();
 //void tapDownlink();
 //void stateDownlink();
 void cmdUplink();
+void deassertRec();
 
 /* Command Callbacks */
 void setMode(uint8_t param);
 void eraseFlash(uint8_t param);
 
 #endif
+
+void assertRec();
+void deassertRec();
 
 /* Polling Task Definitions */
 Task pollImu(IMU_SLOW, TASK_FOREVER, &imuPoll);
@@ -220,6 +227,7 @@ Task cmdRx(100000, TASK_FOREVER, &cmdUplink);
 #endif
 
 /* Other Task Definitions */
+Task deassertRecBtn(100000,1,&deassertRec);
 #ifdef MODE_STATE
 Task margEst(STATE_INTERVAL, TASK_FOREVER, &margCallback);
 #endif
@@ -242,12 +250,15 @@ void setup () {
   digitalWrite(CS_IMU_HI_G,HIGH);
   
   pinMode(IO_LS,OUTPUT);
-  digitalWrite(IO_LS,LOW);
+  digitalWrite(IO_LS,HIGH);
 
-  //pinMode(CS_FLASH,OUTPUT);
-  //digital
+  pinMode(IO_REC,OUTPUT);
+  digitalWrite(IO_REC,LOW);
+
+  beep(IO_LS,440,400);
+  beep(IO_LS,659,400);
+  beep(IO_LS,880,400);
   
-  //digitalWrite(IO_LS,HIGH);
   /* Open all communication ports */
   SPI.begin();
   Wire.begin();
@@ -276,7 +287,9 @@ void setup () {
     char b = flash.readByte(i);
     if ((uint8_t)b != 0xFF){
 
-      beep(IO_LS,440,1000);
+      beep(IO_LS,523,400);
+      beep(IO_LS,554,200);
+      beep(IO_LS,494,400);
       
       // Do not allow flash to be unlocked
       unlockFlash = 0;
@@ -307,9 +320,6 @@ void setup () {
   /* Retrieve calibration values from flash */
   sensor_calib = calib_store.read();
 
-  beep(IO_LS,440,100);
-  delay(500);
-
   /* Calibration and Flash Offload */
   for (int i=0;i<CALIB_TIMEOUT;i++){
     
@@ -333,6 +343,7 @@ void setup () {
   }
 
   beep(IO_LS,523,600);
+  beep(IO_LS,1046,600);
 
   delay(300);
   
@@ -366,6 +377,10 @@ void setup () {
   downlink.addTlm(GPS_ID,&g_data.a,sizeof(g_data));
   //downlink.addTlm(TAP_ID,&imu_data.a,sizeof(imu_data));
 
+  #endif
+
+  #ifdef MODE_STATE
+  downlink.addTlm(STATE_ID,&q,sizeof(q));
   #endif
 
   #ifdef MODE_COATS
@@ -676,6 +691,13 @@ void tapDownlink(){
 
 }
 */
+#ifdef MODE_STATE
+void stateDownlink(){
+  
+  downlink.serialWriteTlm(SerialDownlink,STATE_ID,state_micros);
+  
+}
+#endif
 
 void cmdUplink(){
 
@@ -690,7 +712,7 @@ void cmdUplink(){
 #ifdef MODE_STATE
 void margCallback() {
 
-  uint32_t est_micros = micros();
+  state_micros = micros();
 
   // Update filter and calculate attitude
   filter_update(q,&i_flt,&m_flt);
@@ -715,7 +737,7 @@ void margCallback() {
     uint8_t buf[32];
     uint8_t sz;
 
-    sz = downlink.buildTlm(STATE_ID,&buf,imu_micros)+8;
+    sz = downlink.buildTlm(STATE_ID,&buf,imu_micros);
     flash.writeByteArray(nextAddress,&buf,sz,false);
     nextAddress+=(sz);
   }
@@ -739,14 +761,14 @@ void setMode(uint8_t param){
       pollMag.setInterval(MAG_SLOW);
       pollBaro.setInterval(BARO_GPS_SLOW);
       pollGPS.setInterval(BARO_GPS_SLOW);
-      //pollTap
+      //pollTap.setInterval(PTAP*2);
 
       #ifdef MODE_COATS
       tlmImu.setInterval(IMU_SLOW);
       tlmBaro.setInterval(BARO_GPS_SLOW);
       tlmMag.setInterval(MAG_SLOW);
       tlmGPS.setInterval(BARO_GPS_SLOW);
-      //tlmTap
+      //tlmTap.setInterval(PTAP*4);
       
       // Send status
       downlink.serialWriteStat(SerialDownlink,STAT_GROUND);
@@ -755,8 +777,18 @@ void setMode(uint8_t param){
       #ifdef MODE_FLASH
 
       flashWrite = false;
-  
+
       #endif
+
+      // Set video power
+      // vtx.setPower(PWR_25,1);
+
+      // Toggle IO
+      digitalWrite(IO_REC,HIGH);
+  
+      // Make a task to toggle IO again in 250 ms
+      runner.addTask(deassertRecBtn);
+      deassertRecBtn.enable();
       
       break;
 
@@ -767,13 +799,14 @@ void setMode(uint8_t param){
       pollMag.setInterval(MAG_FAST);
       pollBaro.setInterval(BARO_GPS_FAST);
       pollGPS.setInterval(BARO_GPS_FAST);
-      //pollTap
+      //pollTap.setInterval(PTAP)
 
       #ifdef MODE_COATS
       tlmImu.setInterval(IMU_FAST);
       tlmBaro.setInterval(BARO_GPS_FAST);
       tlmMag.setInterval(MAG_FAST*2);
       tlmGPS.setInterval(BARO_GPS_FAST);
+      //tlmTap.setInterval(PTAP*2);
 
       // Send status
       downlink.serialWriteStat(SerialDownlink,STAT_LAUNCH);
@@ -784,7 +817,17 @@ void setMode(uint8_t param){
       flashWrite = true;
   
       #endif
-      
+
+      // Set video power
+      //vtx.setPower(PWR_500,1);
+
+      // Toggle IO
+      digitalWrite(IO_REC,HIGH);
+  
+      // Make a task to toggle IO again in 250 ms
+      runner.addTask(deassertRecBtn);
+      deassertRecBtn.enable();
+
       break;
 
     default:
@@ -822,6 +865,16 @@ void eraseFlash(uint8_t param){
 }
 
 /*____________________Other Functions__________________*/
+
+void deassertRec(){
+
+  // Toggle IO
+  digitalWrite(IO_REC,LOW);
+
+  // Delete task
+  runner.deleteTask(deassertRecBtn);
+  
+}
 
 #ifdef MODE_FLASH
 
