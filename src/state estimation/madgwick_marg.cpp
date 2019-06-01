@@ -8,12 +8,15 @@ float w_bx = 0;
 float w_by = 0;
 float w_bz = 0; // estimate gyroscope biases error
 
-void filter_update(float q[],imu_float *imu, mag_float *mag){
+void filter_update(float q[],imu_float *imu, imu_raw *raw, mag_float *mag){
 
     // convert rotations to rad/s
     float w_x = imu->gyr_x*0.01745;
     float w_y = imu->gyr_y*0.01745;
     float w_z = imu->gyr_z*0.01745;
+
+    // Pull out saturate value
+    uint16_t sat = raw->sat;
 
     float norm;
     float qdotw[4];
@@ -55,12 +58,24 @@ void filter_update(float q[],imu_float *imu, mag_float *mag){
     float q1_q3 = q[1]*q[3];
     float q2_q3;
 
+    float adj_y = 0.0000;
+    float adj_x = 0.0000;
+
+    // Account for acceleration
+    if (sat & (1<<4)){
+        adj_y = 0.001529052*((w_x*w_x)*(w_z*w_z));
+    }
+
+    if (sat & (1<<6)){
+        adj_x = 0.001529052*((w_x*w_x)+(w_z*w_z));
+    }
+    
+    float a_x = (imu->acc_x)-adj_x; 
+    float a_y = (imu->acc_y)+adj_y; 
+    float a_z = imu->acc_z; 
+
     // Normalize the accelerometer measurement 
-    norm = sqrt(imu->acc_x * imu->acc_x + imu->acc_y * imu->acc_y + imu->acc_z * imu->acc_z); 
-    float a_x = imu->acc_x /norm; 
-    float a_y = imu->acc_y /norm; 
-    float a_z = imu->acc_z /norm; 
-    //SerialUSB.println(norm);
+    norm = sqrt(a_x * a_x + a_y * a_y + a_z * a_z); 
 
     // Normalize the magnetometer measurement 
     norm = sqrt(mag->x * mag->x + mag->y * mag->y + mag->z * mag->z); 
