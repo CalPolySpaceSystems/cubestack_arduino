@@ -9,6 +9,8 @@
  *  
  */
 
+#define VERSION "0.9.1"
+
 /* Define operating modes */
 //#define MODE_DEBUG
 #define MODE_COATS
@@ -32,11 +34,10 @@
 #include "src/sensor/imu_triple.h"
 #include "src/sensor/lis2mdl.h"
 #include "src/sensor/ms56xx.h"
-//#include "src/sensor/....h"
+#include "src/sensor/ptap_ads1115.h"
 
 /* Other libraries */
 #include "src/util/io_utils.h"
-#include "src/util/dvrvtx.h"
 #include "src/state estimation/madgwick_marg.h"
 
 /* COATS */
@@ -52,12 +53,11 @@
 #define IO_REC            6
 
 #define IO_LS             13            // Digital Pin for the loudspeaker
-//#define IO_LED            LED_BUILTIN   // Digital Pin for the LED
 
 /* Other operational definitions */
 #define CALIB_READS       32
-#define CALIB_SECONDS     30
-#define CALIB_TIMEOUT     5
+#define CALIB_SECONDS     45
+#define CALIB_TIMEOUT     10
 
 /* Add additional serial port to the central bus */
 Uart Serial2 (&sercom2, 3, 2, SERCOM_RX_PAD_1, UART_TX_PAD_2);
@@ -79,17 +79,23 @@ Scheduler runner;
 #define ALT_ID          137
 #define BARO_ID         138
 #define STATE_ID        143
+#define TAP_ID          142
 
 #define END             0x4350
 
 #define MODE_ID         0xA5
 #define FLASH_ID        0xB4
-#define VID_ID          0xC3
 
-#define STAT_GROUND     0x10
-#define STAT_LAUNCH     0x11
+#define STAT            0x70
+#define STAT_LAUNCH     0x01
+#define STAT_CALIB      0x02
+#define STAT_FL_EMPTY   0x04
+#define STAT_REC        0x08
 
-#define STAT_ERASED     0x41
+bool dataMode = 0;
+bool calibrated = 0;
+bool flashData = 0;
+bool recording = 0; 
 
 coats downlink = coats(END,STATUS_ENABLE,CRC8);
 
@@ -105,20 +111,26 @@ bool flashWrite = false;
 
 #define IMU_FAST        2403
 #define IMU_SLOW        4806
+
 #define MAG_FAST        10000
 #define MAG_SLOW        40000
+
 #define BARO_GPS_FAST   50000
 #define BARO_GPS_SLOW   100000
-#define TAP_FAST        5000
-#define TAP_SLOW        10000
-#define STATE_INTERVAL  19224
+
+#define TAP_FAST        7500
+#define TAP_SLOW        15000
+
+#define STATE_FAST      19224
+#define STATE_SLOW      STATE_FAST*8
+
+#define STATUS_INTERVAL 1000000
+#define CMD_INTERVAL    1000000
 
 /* Sensor Class Initializations */
 imu_triple      imu = imu_triple(CS_IMU_FINE,CS_IMU_COARSE,CS_IMU_HI_G);
 lis2mdl         mag = lis2mdl();
 SFE_UBLOX_GPS   gps;
-
-dvrvtx          vtx = dvrvtx(Serial2,IO_REC);
 
 /* Sensor Data Structures */
 imu_raw     i_raw;
@@ -145,7 +157,6 @@ baro        b_data;
 
 uint16_t p_data[6];
 
-
 /* Calibration storage structures */
 typedef struct {        
   int16_t imu_fine[6];
@@ -159,7 +170,7 @@ typedef struct {
 static float q[4] = {1.00, 0.00, 0.00, 0.00};
 #endif
 
-//float rpy[3] = {0.0, 0.0, 0.0};
+float rpy[3] = {0.0, 0.0, 0.0};
 
 /* Internal calibration storage */
 #ifdef ARDUINO_SAMD_ZERO
@@ -173,7 +184,7 @@ calib sensor_calib;
 uint32_t imu_micros;
 uint32_t mag_micros;
 uint32_t baro_micros;
-//uint32_t tap_micros
+uint32_t tap_micros;
 uint32_t gps_micros;
 uint32_t state_micros;
 
@@ -184,7 +195,9 @@ void baroPrimeTemp();
 void baroPollTemp();
 void baroPollPress();
 void gpsPoll();
-//void tapCallback();
+void ptapPoll1();
+void ptapPoll2();
+void ptapPoll3();
 
 #ifdef MODE_STATE
 void margCallback();
@@ -196,8 +209,9 @@ void imuDownlink();
 void baroDownlink();
 void magDownlink();
 void gpsDownlink();
-//void tapDownlink();
-//void stateDownlink();
+void tapDownlink();
+void stateDownlink();
+void statusDownlink();
 void cmdUplink();
 void deassertRec();
 
@@ -207,15 +221,19 @@ void eraseFlash(uint8_t param);
 
 #endif
 
-void assertRec();
 void deassertRec();
 
 /* Polling Task Definitions */
 Task pollImu(IMU_SLOW, TASK_FOREVER, &imuPoll);
 Task pollMag(MAG_SLOW, TASK_FOREVER, &magPoll);
 Task pollBaro(BARO_GPS_SLOW, TASK_FOREVER, &baroPrimeTemp);
-//Task pollTap(#,#,#);
+Task pollTap(TAP_FAST, TASK_FOREVER, &ptapPoll1);
 Task pollGPS(BARO_GPS_SLOW, TASK_FOREVER, &gpsPoll);
+
+/* State Estimator Task Definition */
+#ifdef MODE_STATE
+Task margEst(STATE_FAST, TASK_FOREVER, &margCallback);
+#endif
 
 /* Telemetry Task Definitions */
 #ifdef MODE_COATS
@@ -223,14 +241,15 @@ Task tlmImu(IMU_SLOW, TASK_FOREVER, &imuDownlink);
 Task tlmBaro(BARO_GPS_SLOW, TASK_FOREVER, &baroDownlink);
 Task tlmMag(MAG_SLOW, TASK_FOREVER, &magDownlink);
 Task tlmGPS(BARO_GPS_SLOW, TASK_FOREVER, &gpsDownlink);
-Task cmdRx(100000, TASK_FOREVER, &cmdUplink);
+Task tlmTap(TAP_SLOW ,TASK_FOREVER, &tapDownlink);
+Task cmdRx(CMD_INTERVAL, TASK_FOREVER, &cmdUplink);
+Task tlmStatus(STATUS_INTERVAL, TASK_FOREVER, &statusDownlink);
+Task tlmState(STATE_SLOW,TASK_FOREVER, &stateDownlink);
 #endif
 
 /* Other Task Definitions */
-Task deassertRecBtn(100000,1,&deassertRec);
-#ifdef MODE_STATE
-Task margEst(STATE_INTERVAL, TASK_FOREVER, &margCallback);
-#endif
+Task deassertRecBtn(500000,1,&deassertRec);
+
 /*____________________Setup___________________*/
 void setup () {
 
@@ -276,11 +295,11 @@ void setup () {
   gps.setAutoPVT(true);
   gps.saveConfiguration();
 
+  digitalWrite(IO_LS,LOW);
+
   #ifdef MODE_FLASH
 
   flash.begin();
-
-  bool unlockFlash = 1;
 
   // Check for data in flash
   for (uint8_t i=0;i<16;i++){
@@ -292,26 +311,24 @@ void setup () {
       beep(IO_LS,494,400);
       
       // Do not allow flash to be unlocked
-      unlockFlash = 0;
-
-      statusStartup |= 0x02;
-      
+      flashData = 1;
+ 
       break;
       
     }
   }
   
-  if (unlockFlash){
+  if (!flashData){
     
-  digitalWrite(CS_FLASH,LOW);
-  SPI.transfer(0x06);
-  digitalWrite(CS_FLASH,HIGH);
+    digitalWrite(CS_FLASH,LOW);
+    SPI.transfer(0x06);
+    digitalWrite(CS_FLASH,HIGH);
 
-  delay(100);
+    delay(100);
 
-  digitalWrite(CS_FLASH,LOW);
-  SPI.transfer(0x98);
-  digitalWrite(CS_FLASH,HIGH);
+    digitalWrite(CS_FLASH,LOW);
+    SPI.transfer(0x98);
+    digitalWrite(CS_FLASH,HIGH);
   
   }
     
@@ -320,22 +337,27 @@ void setup () {
   /* Retrieve calibration values from flash */
   sensor_calib = calib_store.read();
 
+
   /* Calibration and Flash Offload */
   for (int i=0;i<CALIB_TIMEOUT;i++){
     
     if (SerialUSB){
 
+      printHeader();
+
       #ifdef MODE_FLASH
       
-      flashOffload();
+      flashOffload(flashData);
 
       #endif
-      bool isCalibrated = false;
-      if(sensor_calib.imu_fine[1]){
-        isCalibrated = true;
-      } 
+
+      for (int j = 0; j<6;j++){
+        if(sensor_calib.imu_fine[i]){
+          calibrated = true;
+        } 
+      }
       
-      calibrate(isCalibrated);
+      calibrate(calibrated);
     }
 
     delay(1000);
@@ -348,9 +370,8 @@ void setup () {
   delay(300);
   
   /* Notify if uncalibrated */ 
-  if(!sensor_calib.imu_fine[1]){
+  if(!calibrated){
     
-    statusStartup |= 0x01;
     beep(IO_LS,494,600);
     
   }
@@ -375,7 +396,7 @@ void setup () {
   downlink.addTlm(MAG_RAW_ID,&m_raw.a,sizeof(m_raw));
   downlink.addTlm(BARO_ID,&b_data.a,sizeof(b_data));
   downlink.addTlm(GPS_ID,&g_data.a,sizeof(g_data));
-  //downlink.addTlm(TAP_ID,&imu_data.a,sizeof(imu_data));
+  downlink.addTlm(TAP_ID,&p_data,sizeof(p_data));
 
   #endif
 
@@ -403,7 +424,7 @@ void setup () {
   runner.addTask(pollImu);
   runner.addTask(pollMag);
   runner.addTask(pollBaro);
-  //runner.addTask(pollTap);
+  runner.addTask(pollTap);
   runner.addTask(pollGPS);
 
   #ifdef MODE_STATE
@@ -415,15 +436,17 @@ void setup () {
   runner.addTask(tlmMag);
   runner.addTask(tlmBaro); 
   runner.addTask(tlmGPS);
-  //runner.addtask(tlmTap);
+  runner.addTask(tlmTap);
   runner.addTask(cmdRx);
+  runner.addTask(deassertRecBtn);
+  runner.addTask(tlmStatus);
   #endif 
 
   /* Enable Tasks */
   pollImu.enable();
   pollMag.enable();
   pollBaro.enable();
-  //pollTap.enable();
+  pollTap.enable();
   pollGPS.enable();
 
   #ifdef MODE_STATE
@@ -435,11 +458,10 @@ void setup () {
   tlmMag.enable();
   tlmBaro.enable();
   tlmGPS.enable();
-  //tlmTap.enable();
+  tlmTap.enable();
   cmdRx.enable();
+  tlmStatus.enable();
 
-
-  
   #endif  
 
 }
@@ -615,47 +637,97 @@ void gpsPoll(){
   #endif
   
 }
-/*
-void ptapCallback1() {
-  raw_data_packet[0] = readRaw_ads1115(ADC_A_ADDR);
+
+/* Pressure Taps */
+void ptapPoll1() {
+
+  tap_micros = micros();
+
+  p_data[0] = readRaw_ads1115(ADC_A_ADDR);
   prime_ads1115(ADC_A_ADDR, 1); //A at ch1
 
-  raw_data_packet[1] = readRaw_ads1115(ADC_B_ADDR);
+  p_data[1] = readRaw_ads1115(ADC_B_ADDR);
   prime_ads1115(ADC_B_ADDR, 1); //B at ch1
 
-  pollPtap.setCallback(&ptapCallback3);
-  pollPtap.delay(1000);
+  pollTap.setCallback(&ptapPoll2);
+  pollTap.delay(1000);
 }
 
-void ptapCallback2() {
-  raw_data_packet[2] = readRaw_ads1115(ADC_A_ADDR);
+void ptapPoll2() {
+  p_data[2] = readRaw_ads1115(ADC_A_ADDR);
   prime_ads1115(ADC_A_ADDR, 2); //A at ch2
 
-  raw_data_packet[3] = readRaw_ads1115(ADC_B_ADDR);
+  p_data[3] = readRaw_ads1115(ADC_B_ADDR);
   prime_ads1115(ADC_B_ADDR, 2); //B at ch2
 
-  
-  for(int i=0; i<=5; i++) {
-    SerialUSB.println(raw_data_packet[i]);
-  }
-
-  pollPtap.setCallback(&ptapCallback1);
-
+  pollTap.setCallback(&ptapPoll3);
+  pollTap.delay(1000); //calculated to be 983 microseconds, round to 1000
 }
 
-void ptapCallback3() {
-  ptap_micros = micros();
+void ptapPoll3() {
 
-  raw_data_packet[4] = readRaw_ads1115(ADC_A_ADDR);
+  p_data[4] = readRaw_ads1115(ADC_A_ADDR);
   prime_ads1115(ADC_A_ADDR, 0); //A at ch0
 
-  raw_data_packet[5] = readRaw_ads1115(ADC_B_ADDR);
+  p_data[5] = readRaw_ads1115(ADC_B_ADDR);
   prime_ads1115(ADC_B_ADDR, 0); //B at ch0
 
-  pollPtap.setCallback(&ptapCallback2);
-  pollPtap.delay(1000); //calculated to be 983 microseconds, round to 1000
+  // Store data in flash
+  #ifdef MODE_FLASH
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
+
+    sz = downlink.buildTlm(TAP_ID,buf,tap_micros);
+    flash.writeByteArray(nextAddress,buf,sz,false);
+    nextAddress+=(sz);
+  }
+  
+  #endif
+    
+  pollTap.setCallback(&ptapPoll1);
+
 }
-*/
+
+/*_______________State Estimation Callbacks______________*/
+
+#ifdef MODE_STATE
+void margCallback() {
+
+  state_micros = micros();
+
+  // Update filter and calculate attitude
+  filter_update(q,&i_flt,&i_raw,&m_flt);
+
+  // Convert quaternians to roll/pitch/yaw
+  //conv_q_rpy(q,rpy);
+
+  #ifdef MODE_DEBUG
+  
+  // Print all data
+  //SerialUSB.print(est_micros);
+  //SerialUSB.print(',');
+  //SerialUSB.print(rpy[0]);
+  //SerialUSB.print(',');
+  //SerialUSB.print(rpy[1]);
+  //SerialUSB.print(',');
+  //SerialUSB.println(rpy[2]);
+  #endif
+
+  #ifdef MODE_FLASH
+  if (flashWrite){
+    uint8_t buf[32];
+    uint8_t sz;
+
+    sz = downlink.buildTlm(STATE_ID,buf,state_micros);
+    flash.writeByteArray(nextAddress,buf,sz,false);
+    nextAddress+=(sz);
+  }
+  #endif
+  
+}
+#endif
+
 
 /*______________Telemetry Callbacks______________________*/
 
@@ -686,11 +758,13 @@ void gpsDownlink() {
     
 }
 
-/*
-void tapDownlink(){
 
+void tapDownlink(){
+  
+  downlink.serialWriteTlm(SerialDownlink,TAP_ID,tap_micros);
+  
 }
-*/
+
 #ifdef MODE_STATE
 void stateDownlink(){
   
@@ -705,45 +779,18 @@ void cmdUplink(){
   
 }
 
-#endif
-
-/*_______________State Estimation Callbacks______________*/
-
-#ifdef MODE_STATE
-void margCallback() {
-
-  state_micros = micros();
-
-  // Update filter and calculate attitude
-  filter_update(q,&i_flt,&m_flt);
-
-  // Convert quaternians to roll/pitch/yaw
-  //conv_q_rpy(q,rpy);
-
-  #ifdef MODE_DEBUG
+void statusDownlink(){
   
-  // Print all data
-  //SerialUSB.print(est_micros);
-  //SerialUSB.print(',');
-  SerialUSB.print(rpy[0]);
-  SerialUSB.print(',');
-  SerialUSB.print(rpy[1]);
-  SerialUSB.print(',');
-  SerialUSB.println(rpy[2]);
-  #endif
+  uint8_t statusCurrent = STAT | (dataMode) | (calibrated << 1) | (flashData << 2) | (recording << 3);
 
-  #ifdef MODE_FASH
-  if (flashWrite){
-    uint8_t buf[32];
-    uint8_t sz;
-
-    sz = downlink.buildTlm(STATE_ID,&buf,imu_micros);
-    flash.writeByteArray(nextAddress,&buf,sz,false);
-    nextAddress+=(sz);
+  if (nextAddress>=8000000){
+    flashWrite = false;
   }
-  #endif
+  
+  downlink.serialWriteStat(SerialDownlink,statusCurrent);
   
 }
+
 #endif
 
 /*____________________Command Callbacks__________________*/
@@ -761,17 +808,14 @@ void setMode(uint8_t param){
       pollMag.setInterval(MAG_SLOW);
       pollBaro.setInterval(BARO_GPS_SLOW);
       pollGPS.setInterval(BARO_GPS_SLOW);
-      //pollTap.setInterval(PTAP*2);
+      pollTap.setInterval(TAP_SLOW);
 
       #ifdef MODE_COATS
       tlmImu.setInterval(IMU_SLOW);
       tlmBaro.setInterval(BARO_GPS_SLOW);
-      tlmMag.setInterval(MAG_SLOW);
       tlmGPS.setInterval(BARO_GPS_SLOW);
-      //tlmTap.setInterval(PTAP*4);
+      tlmTap.setInterval(TAP_SLOW*2);
       
-      // Send status
-      downlink.serialWriteStat(SerialDownlink,STAT_GROUND);
       #endif
 
       #ifdef MODE_FLASH
@@ -780,15 +824,16 @@ void setMode(uint8_t param){
 
       #endif
 
-      // Set video power
-      // vtx.setPower(PWR_25,1);
+      dataMode = 0;
 
-      // Toggle IO
-      digitalWrite(IO_REC,HIGH);
-  
-      // Make a task to toggle IO again in 250 ms
-      runner.addTask(deassertRecBtn);
-      deassertRecBtn.enable();
+      if (recording){
+
+        // Toggle IO
+        digitalWrite(IO_REC,HIGH);
+        deassertRecBtn.restartDelayed(100000);
+        recording = 0;
+        
+      }
       
       break;
 
@@ -799,34 +844,33 @@ void setMode(uint8_t param){
       pollMag.setInterval(MAG_FAST);
       pollBaro.setInterval(BARO_GPS_FAST);
       pollGPS.setInterval(BARO_GPS_FAST);
-      //pollTap.setInterval(PTAP)
+      pollTap.setInterval(TAP_FAST);
 
       #ifdef MODE_COATS
       tlmImu.setInterval(IMU_FAST);
-      tlmBaro.setInterval(BARO_GPS_FAST);
-      tlmMag.setInterval(MAG_FAST*2);
-      tlmGPS.setInterval(BARO_GPS_FAST);
-      //tlmTap.setInterval(PTAP*2);
+      tlmBaro.setInterval(BARO_GPS_SLOW);
+      tlmGPS.setInterval(BARO_GPS_SLOW);
+      tlmTap.setInterval(TAP_SLOW);
 
-      // Send status
-      downlink.serialWriteStat(SerialDownlink,STAT_LAUNCH);
       #endif
 
       #ifdef MODE_FLASH
 
       flashWrite = true;
+      flashData = 1;
   
       #endif
 
-      // Set video power
-      //vtx.setPower(PWR_500,1);
+      dataMode = 1;
 
-      // Toggle IO
-      digitalWrite(IO_REC,HIGH);
-  
-      // Make a task to toggle IO again in 250 ms
-      runner.addTask(deassertRecBtn);
-      deassertRecBtn.enable();
+      if (!recording){
+
+        // Toggle IO
+        digitalWrite(IO_REC,HIGH);
+        deassertRecBtn.restartDelayed(100000);
+        recording = 1;
+        
+      }
 
       break;
 
@@ -856,10 +900,11 @@ void eraseFlash(uint8_t param){
     
     flash.eraseChip();
 
+    flashData = 0;
+    nextAddress = 0;
+
   #endif
 
-  downlink.serialWriteStat(SerialDownlink,STAT_ERASED);
-    
   }
   
 }
@@ -871,14 +916,42 @@ void deassertRec(){
   // Toggle IO
   digitalWrite(IO_REC,LOW);
 
-  // Delete task
-  runner.deleteTask(deassertRecBtn);
+  // Disable the task
+  deassertRecBtn.disable();
   
+}
+
+/*_______________Initialization Functions_______________*/
+
+void printHeader(){
+  
+  SerialUSB.println("______________________________________");
+  SerialUSB.println("|       CAL POLY SPACE SYSTEMS       |");
+  SerialUSB.println("|    CUBESTACK TELEMETRY SOFTWARE    |");
+  
+  SerialUSB.print("|           VERSION ");
+  SerialUSB.print(VERSION);
+  SerialUSB.println("            |");
+  SerialUSB.println("|                                    |");
+  SerialUSB.println("|-------------{  MMXIX  }------------|");
+  SerialUSB.println("|____________________________________|");
+  SerialUSB.println("|             WRITTEN BY:            |");
+  SerialUSB.println("|           PATRICK CHIZEK           |");
+  SerialUSB.println("|              BEN CLARK             |");
+  SerialUSB.println("|             ERIC ASHLEY            |");
+  SerialUSB.println("|            BRETT GLIDDEN           |");
+  SerialUSB.println("|____________________________________|");
+  SerialUSB.println("|         You traded emotion         |");
+  SerialUSB.println("|    for skills and computerized     |");
+  SerialUSB.println("|____________________________________|");
+  SerialUSB.println("");
 }
 
 #ifdef MODE_FLASH
 
-void flashOffload(){
+void flashOffload(bool flashData){
+
+  if(flashData){
 
   SerialUSB.println("Data detected in storage. Would you like to offload it? (y/n)"); 
   
@@ -917,8 +990,6 @@ void flashOffload(){
       }
 
       SerialUSB.println("Offload Complete.");
-
-      playInternationale();
       
       while(1){;}
       
@@ -937,6 +1008,11 @@ void flashOffload(){
       char c = SerialUSB.read();
     }
   
+  }
+  }
+
+  else{
+    SerialUSB.println("No flash data detected.");
   }
   
 }
@@ -1016,6 +1092,9 @@ void calibrate(bool hasCalibration){
 
   SerialUSB.println("Calibration values stored. Please restart the device");
 
+  beep(IO_LS,523,200);
+  beep(IO_LS,659,400);
+
   while(SerialUSB.available())
   {
     char c = SerialUSB.read();
@@ -1023,63 +1102,6 @@ void calibrate(bool hasCalibration){
   while(!SerialUSB.available()){}
   
   // Wait forever
-  playInternationale();
-
   while(1){};
-
-}
-
-#define REST  0
-#define A4    440
-#define B4    494
-#define C4    523    
-#define C4S   554
-#define D4    587
-#define D4S   622
-#define E4    659
-#define F4S   740
-#define G4    784
-#define A5    880
-#define B5    988
-#define C5    1047
-
-#define E     300
-#define Q     600
-#define QD    900
-#define H     1200
-
-void playInternationale(){
-
-  int notes1[35] = {D4,G4,F4S,A5,G4,D4,B4,E4,C4,E4,A5,G4,F4S,E4,D4,C4,B4,REST,D4,G4,F4S,A5,G4,D4,B4,E4,C4,A5,G4,F4S,A5,C5,F4S,G4,REST};
-  int times1[35] = {E,QD,E,E,E,E,E,H,QD,E,QD,E,E,E,E,E,H,Q,Q,QD,E,E,E,E,E,H,Q,E,E,Q,Q,Q,Q,H,Q};
-
-  int notes2[35] = {A5,G4,F4S,E4,F4S,G4,E4,F4S,D4,C4S,D4,E4,A4,A5,G4,F4S,REST,REST,A5,A5,F4S,D4,D4,C4S,D4,B5,G4,G4,F4S,E4,F4S,A5,G4,E4,D4};
-  int times2[35] = {E,E,H,E,E,E,E,H,Q,E,E,QD,E,QD,E,H,Q,E,E,QD,E,E,E,E,E,H,E,E,E,E,Q,Q,Q,Q,Q};
-
-  int notes3[35] = {REST,B5,G4};
-  int times3[35] = {H,E,E,H,QD,E,H,Q,E,E,H,QD,E,H,Q, Q,H,QD,E,H,QD,E,QD,E,Q,Q,H,Q};
-
-
-  // 1st part
-  for (int i=0;i<35;i++){
-    if (notes1[i]){
-      beep(IO_LS,notes1[i],times1[i]);
-    }
-    else{
-      delay(times1[i]);
-    }
-    
-  }
-
-  // Second part
-  for (int i=0;i<35;i++){
-    if (notes2[i]){
-      beep(IO_LS,notes2[i],times2[i]);
-    }
-    else{
-      delay(times2[i]);
-    }
-    
-  }
 
 }
