@@ -940,6 +940,7 @@ void printHeader(){
   SerialUSB.println("|              BEN CLARK             |");
   SerialUSB.println("|             ERIC ASHLEY            |");
   SerialUSB.println("|            BRETT GLIDDEN           |");
+  SerialUSB.println("|             TAYO ALERU             |");
   SerialUSB.println("|____________________________________|");
   SerialUSB.println("|         You traded emotion         |");
   SerialUSB.println("|    for skills and computerized     |");
